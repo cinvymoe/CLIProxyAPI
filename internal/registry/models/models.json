@@ -1949,5 +1949,75 @@
         ]
       }
     }
+  ],
+  "codebuddy": [
+    {
+      "id": "codebuddy-auto",
+      "object": "model",
+      "created": 1744531200,
+      "owned_by": "tencent",
+      "type": "codebuddy",
+      "display_name": "CodeBuddy Auto",
+      "description": "CodeBuddy Auto - Tencent Cloud AI coding assistant",
+      "context_length": 131072,
+      "max_completion_tokens": 32768,
+      "thinking": {
+        "min": 1024,
+        "max": 32000,
+        "zero_allowed": true,
+        "dynamic_allowed": true
+      }
+    },
+    {
+      "id": "glm-5.1",
+      "object": "model",
+      "created": 1774473600,
+      "owned_by": "zhipu",
+      "type": "codebuddy",
+      "display_name": "GLM 5.1",
+      "description": "GLM 5.1 - Zhipu AI latest general model",
+      "context_length": 131072,
+      "max_completion_tokens": 32768,
+      "thinking": {
+        "min": 1024,
+        "max": 32000,
+        "zero_allowed": true,
+        "dynamic_allowed": true
+      }
+    },
+    {
+      "id": "glm-5.0",
+      "object": "model",
+      "created": 1774387200,
+      "owned_by": "zhipu",
+      "type": "codebuddy",
+      "display_name": "GLM 5.0",
+      "description": "GLM 5.0 - Zhipu AI general model",
+      "context_length": 131072,
+      "max_completion_tokens": 32768,
+      "thinking": {
+        "min": 1024,
+        "max": 32000,
+        "zero_allowed": true,
+        "dynamic_allowed": true
+      }
+    },
+    {
+      "id": "kimi-2.5",
+      "object": "model",
+      "created": 1769472000,
+      "owned_by": "moonshot",
+      "type": "codebuddy",
+      "display_name": "Kimi 2.5",
+      "description": "Kimi 2.5 - Moonshot AI coding model",
+      "context_length": 131072,
+      "max_completion_tokens": 32768,
+      "thinking": {
+        "min": 1024,
+        "max": 32000,
+        "zero_allowed": true,
+        "dynamic_allowed": true
+      }
+    }
   ]
 }
