@@ -73,6 +73,7 @@ func (e *OpenAICompatExecutor) HttpRequest(ctx context.Context, auth *cliproxyau
 
 func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
+	log.Debugf("OpenAICompatExecutor.Execute called: provider=%s model=%s stream=%v", e.provider, baseModel, opts.Stream)
 
 	reporter := helps.NewUsageReporter(ctx, e.Identifier(), baseModel, auth)
 	defer reporter.TrackFailure(ctx, &err)
@@ -156,20 +157,24 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 			httpResp.Body.Close()
 			helps.AppendAPIResponseChunk(ctx, e.cfg, b)
 			helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
-			if isXunfeiRetryableError(b) && attempt < xunfeiMaxRetries {
-				wait := xunfeiRetryWait[attempt]
-				if attempt >= len(xunfeiRetryWait) {
-					wait = xunfeiRetryWait[len(xunfeiRetryWait)-1]
-				}
-				log.Infof("Xunfei retryable error detected (attempt %d/%d, code 10012: system busy), retrying after %v", attempt+1, xunfeiMaxRetries, wait)
-				if errSleep := sleepWithContext(ctx, wait); errSleep != nil {
-					err = statusErr{code: http.StatusTooManyRequests, msg: string(b)}
-					return resp, err
-				}
-				continue
-			}
 			if isXunfeiRetryableError(b) {
-				log.Warnf("Xunfei error persisted after %d retries (code 10012: system busy)", xunfeiMaxRetries)
+				xunfeiCfg := e.cfg.XunfeiRetry
+				maxRetries := xunfeiCfg.EffectiveMaxRetries()
+				waits := xunfeiCfg.WaitDurations()
+				if attempt < maxRetries {
+					waitMs := waits[attempt]
+					if attempt >= len(waits) {
+						waitMs = waits[len(waits)-1]
+					}
+					wait := time.Duration(waitMs) * time.Millisecond
+					log.Infof("Xunfei retryable error detected (attempt %d/%d, code 10012: system busy), retrying after %v", attempt+1, maxRetries, wait)
+					if errSleep := sleepWithContext(ctx, wait); errSleep != nil {
+						err = statusErr{code: http.StatusTooManyRequests, msg: string(b)}
+						return resp, err
+					}
+					continue
+				}
+				log.Warnf("Xunfei error persisted after %d retries (code 10012: system busy)", maxRetries)
 			}
 			err = statusErr{code: httpResp.StatusCode, msg: string(b)}
 			return resp, err
@@ -192,6 +197,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 
 func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
+	log.Debugf("OpenAICompatExecutor.ExecuteStream called: provider=%s model=%s", e.provider, baseModel)
 
 	reporter := helps.NewUsageReporter(ctx, e.Identifier(), baseModel, auth)
 	defer reporter.TrackFailure(ctx, &err)
@@ -269,20 +275,24 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 			httpResp.Body.Close()
 			helps.AppendAPIResponseChunk(ctx, e.cfg, b)
 			helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
-			if isXunfeiRetryableError(b) && attempt < xunfeiMaxRetries {
-				wait := xunfeiRetryWait[attempt]
-				if attempt >= len(xunfeiRetryWait) {
-					wait = xunfeiRetryWait[len(xunfeiRetryWait)-1]
-				}
-				log.Infof("Xunfei retryable error detected (attempt %d/%d, code 10012: system busy), retrying after %v", attempt+1, xunfeiMaxRetries, wait)
-				if errSleep := sleepWithContext(ctx, wait); errSleep != nil {
-					err = statusErr{code: http.StatusTooManyRequests, msg: string(b)}
-					return nil, err
-				}
-				continue
-			}
 			if isXunfeiRetryableError(b) {
-				log.Warnf("Xunfei error persisted after %d retries (code 10012: system busy)", xunfeiMaxRetries)
+				xunfeiCfg := e.cfg.XunfeiRetry
+				maxRetries := xunfeiCfg.EffectiveMaxRetries()
+				waits := xunfeiCfg.WaitDurations()
+				if attempt < maxRetries {
+					waitMs := waits[attempt]
+					if attempt >= len(waits) {
+						waitMs = waits[len(waits)-1]
+					}
+					wait := time.Duration(waitMs) * time.Millisecond
+					log.Infof("Xunfei retryable error detected (attempt %d/%d, code 10012: system busy), retrying after %v", attempt+1, maxRetries, wait)
+					if errSleep := sleepWithContext(ctx, wait); errSleep != nil {
+						err = statusErr{code: http.StatusTooManyRequests, msg: string(b)}
+						return nil, err
+					}
+					continue
+				}
+				log.Warnf("Xunfei error persisted after %d retries (code 10012: system busy)", maxRetries)
 			}
 			err = statusErr{code: httpResp.StatusCode, msg: string(b)}
 			return nil, err
@@ -295,7 +305,23 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 					log.Errorf("openai compat executor: close response body error: %v", errClose)
 				}
 			}()
-			scanner := bufio.NewScanner(httpResp.Body)
+
+			peekReader := bufio.NewReader(httpResp.Body)
+			peekBytes, errPeek := peekReader.Peek(1024)
+			if errPeek == nil {
+				log.Debugf("Xunfei stream response peek: %s", string(peekBytes))
+				if bytes.Contains(peekBytes, []byte(`"code"`)) && bytes.Contains(peekBytes, []byte(`10012`)) {
+					log.Infof("Xunfei 10012 error pattern found in stream response peek: %s", string(peekBytes))
+				}
+				if isXunfeiRetryableError(peekBytes) {
+					body, _ := io.ReadAll(peekReader)
+					log.Infof("Xunfei retryable error detected in stream response, returning error")
+					out <- cliproxyexecutor.StreamChunk{Err: statusErr{code: http.StatusTooManyRequests, msg: string(body)}}
+					return
+				}
+			}
+
+			scanner := bufio.NewScanner(peekReader)
 			scanner.Buffer(nil, 52_428_800)
 			var param any
 			for scanner.Scan() {
@@ -308,11 +334,27 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 					continue
 				}
 
-				if !bytes.HasPrefix(line, []byte("data:")) {
+				lineCopy := bytes.Clone(line)
+				if bytes.Contains(lineCopy, []byte(`"code"`)) && bytes.Contains(lineCopy, []byte(`10012`)) {
+					log.Infof("Xunfei 10012 error detected in stream line: %s", string(lineCopy))
+					jsonBody := lineCopy
+					if bytes.HasPrefix(lineCopy, []byte("data: ")) {
+						jsonBody = lineCopy[6:]
+					}
+					if isXunfeiRetryableError(jsonBody) {
+						log.Warnf("Xunfei 10012 error in stream - returning 429 error with Retry-After to client")
+						retryAfter := time.Duration(e.cfg.XunfeiRetry.EffectiveInitialWait()) * time.Millisecond
+						out <- cliproxyexecutor.StreamChunk{Err: statusErr{code: http.StatusTooManyRequests, msg: "Xunfei API error (code 10012): System is busy, please try again later", retryAfter: &retryAfter}}
+						return
+					}
+					log.Warnf("Xunfei 10012 detected but isXunfeiRetryableError returned false for json: %s", string(jsonBody))
+				}
+
+				if !bytes.HasPrefix(lineCopy, []byte("data:")) {
 					continue
 				}
 
-				chunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, opts.OriginalRequest, translated, bytes.Clone(line), &param)
+				chunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, opts.OriginalRequest, translated, lineCopy, &param)
 				for i := range chunks {
 					out <- cliproxyexecutor.StreamChunk{Payload: chunks[i]}
 				}
@@ -430,18 +472,10 @@ func (e statusErr) Error() string {
 func (e statusErr) StatusCode() int            { return e.code }
 func (e statusErr) RetryAfter() *time.Duration { return e.retryAfter }
 
-const xunfeiMaxRetries = 3
-
 var xunfeiRetryableCodes = map[int]struct{}{
 	10012: {},
 }
 
-var xunfeiRetryWait = []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second}
-
-// isXunfeiRetryableError checks if the response body contains a Xunfei retryable error code.
-// Xunfei errors can appear in two formats:
-//   - Nested: {"error":{"code": 10012, "message": "..."}}
-//   - Flat:   {"code": 10012, "message": "...", "sid": "..."}
 func isXunfeiRetryableError(body []byte) bool {
 	if len(body) == 0 {
 		return false
@@ -449,7 +483,6 @@ func isXunfeiRetryableError(body []byte) bool {
 	if !bytes.Contains(body, []byte(`"code"`)) && !bytes.Contains(body, []byte(`"Code"`)) {
 		return false
 	}
-	// Try nested format: {"error":{"code": 10012, "message": "..."}}
 	var nested struct {
 		Error struct {
 			Code    int    `json:"code"`
@@ -457,13 +490,12 @@ func isXunfeiRetryableError(body []byte) bool {
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(body, &nested); err == nil && nested.Error.Code != 0 {
+		log.Debugf("isXunfeiRetryableError: nested format parsed, code=%d", nested.Error.Code)
 		if _, retryable := xunfeiRetryableCodes[nested.Error.Code]; retryable {
+			log.Infof("isXunfeiRetryableError: detected retryable nested error code %d", nested.Error.Code)
 			return true
 		}
 	}
-	// Try flat format with various field names:
-	// - {"code": 10012, "message": "...", "sid": "..."}
-	// - {"code": 10012, "msg": "...", "Sid": "...", "timeStamp": "..."}
 	var flat struct {
 		Code      int    `json:"code"`
 		Message   string `json:"message"`
@@ -472,7 +504,9 @@ func isXunfeiRetryableError(body []byte) bool {
 		TimeStamp string `json:"timeStamp"`
 	}
 	if err := json.Unmarshal(body, &flat); err == nil && flat.Code != 0 {
+		log.Debugf("isXunfeiRetryableError: flat format parsed, code=%d", flat.Code)
 		if _, retryable := xunfeiRetryableCodes[flat.Code]; retryable {
+			log.Infof("isXunfeiRetryableError: detected retryable flat error code %d", flat.Code)
 			return true
 		}
 	}

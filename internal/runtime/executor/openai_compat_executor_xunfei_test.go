@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 )
 
 func TestIsXunfeiRetryableError(t *testing.T) {
@@ -84,15 +86,50 @@ func TestIsXunfeiRetryableError(t *testing.T) {
 	}
 }
 
-func TestXunfeiRetryConstants(t *testing.T) {
-	if xunfeiMaxRetries != 3 {
-		t.Errorf("xunfeiMaxRetries = %d, want 3", xunfeiMaxRetries)
+func TestXunfeiRetryConfigDefaults(t *testing.T) {
+	cfg := config.XunfeiRetryConfig{}
+
+	if cfg.EffectiveMaxRetries() != 3 {
+		t.Errorf("EffectiveMaxRetries() = %d, want 3", cfg.EffectiveMaxRetries())
 	}
-	if len(xunfeiRetryWait) != 3 {
-		t.Errorf("len(xunfeiRetryWait) = %d, want 3", len(xunfeiRetryWait))
+	if cfg.EffectiveInitialWait() != 2000 {
+		t.Errorf("EffectiveInitialWait() = %d, want 2000", cfg.EffectiveInitialWait())
 	}
-	if xunfeiRetryWait[0] != 2*time.Second {
-		t.Errorf("xunfeiRetryWait[0] = %v, want 2s", xunfeiRetryWait[0])
+	if cfg.EffectiveMaxWait() != 16000 {
+		t.Errorf("EffectiveMaxWait() = %d, want 16000", cfg.EffectiveMaxWait())
+	}
+	if cfg.EffectiveMultiplier() != 2.0 {
+		t.Errorf("EffectiveMultiplier() = %v, want 2.0", cfg.EffectiveMultiplier())
+	}
+
+	waits := cfg.WaitDurations()
+	if len(waits) != 3 {
+		t.Errorf("len(WaitDurations()) = %d, want 3", len(waits))
+	}
+	if waits[0] != 2000 {
+		t.Errorf("WaitDurations()[0] = %d, want 2000", waits[0])
+	}
+}
+
+func TestXunfeiRetryConfigCustom(t *testing.T) {
+	cfg := config.XunfeiRetryConfig{
+		MaxRetries:  8,
+		InitialWait: 1000,
+		MaxWait:     30000,
+		Multiplier:  1.5,
+	}
+
+	if cfg.EffectiveMaxRetries() != 8 {
+		t.Errorf("EffectiveMaxRetries() = %d, want 8", cfg.EffectiveMaxRetries())
+	}
+	if cfg.EffectiveInitialWait() != 1000 {
+		t.Errorf("EffectiveInitialWait() = %d, want 1000", cfg.EffectiveInitialWait())
+	}
+	if cfg.EffectiveMaxWait() != 30000 {
+		t.Errorf("EffectiveMaxWait() = %d, want 30000", cfg.EffectiveMaxWait())
+	}
+	if cfg.EffectiveMultiplier() != 1.5 {
+		t.Errorf("EffectiveMultiplier() = %v, want 1.5", cfg.EffectiveMultiplier())
 	}
 }
 

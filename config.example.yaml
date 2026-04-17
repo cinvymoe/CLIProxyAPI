@@ -100,6 +100,14 @@ quota-exceeded:
   switch-preview-model: true # Whether to automatically switch to a preview model when a quota is exceeded
   antigravity-credits: true # Whether to use credits as last-resort fallback when all free-tier auths are exhausted for Claude models
 
+# Xunfei (Spark) API retry configuration for error code 10012 (system busy).
+# When Xunfei returns 10012, the proxy will automatically retry with exponential backoff.
+xunfei-retry:
+  max-retries: 8           # Maximum retry attempts (default: 3)
+  initial-wait-ms: 1000    # Initial wait time in milliseconds (default: 2000)
+  max-wait-ms: 30000       # Maximum wait time in milliseconds (default: 16000)
+  multiplier: 1.5          # Exponential backoff multiplier (default: 2.0)
+
 # Routing strategy for selecting credentials when multiple match.
 routing:
   strategy: "round-robin" # round-robin (default), fill-first
