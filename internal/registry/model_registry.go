@@ -125,6 +125,8 @@ type ModelRegistry struct {
 	availableModelsCache map[string]availableModelsCacheEntry
 	// hook is an optional callback sink for model registration changes
 	hook ModelRegistryHook
+	// crossProviderPoolManager manages cross-provider pool aliases
+	crossProviderPoolManager *CrossProviderPoolManager
 }
 
 // Global model registry instance
@@ -135,12 +137,13 @@ var registryOnce sync.Once
 func GetGlobalRegistry() *ModelRegistry {
 	registryOnce.Do(func() {
 		globalRegistry = &ModelRegistry{
-			models:               make(map[string]*ModelRegistration),
-			clientModels:         make(map[string][]string),
-			clientModelInfos:     make(map[string]map[string]*ModelInfo),
-			clientProviders:      make(map[string]string),
-			availableModelsCache: make(map[string]availableModelsCacheEntry),
-			mutex:                &sync.RWMutex{},
+			models:                   make(map[string]*ModelRegistration),
+			clientModels:             make(map[string][]string),
+			clientModelInfos:         make(map[string]map[string]*ModelInfo),
+			clientProviders:          make(map[string]string),
+			availableModelsCache:     make(map[string]availableModelsCacheEntry),
+			mutex:                    &sync.RWMutex{},
+			crossProviderPoolManager: NewCrossProviderPoolManager(),
 		}
 	})
 	return globalRegistry
@@ -1314,4 +1317,24 @@ func (r *ModelRegistry) GetModelsForClient(clientID string) []*ModelInfo {
 		}
 	}
 	return result
+}
+
+func (r *ModelRegistry) IsCrossProviderPoolAlias(modelName string) bool {
+	return r.crossProviderPoolManager.IsPoolAlias(modelName)
+}
+
+func (r *ModelRegistry) GetCrossProviderPool(alias string) *CrossProviderPool {
+	return r.crossProviderPoolManager.GetPool(alias)
+}
+
+func (r *ModelRegistry) GetCrossProviderPoolProviders(alias string) []string {
+	return r.crossProviderPoolManager.GetPoolProviders(alias)
+}
+
+func (r *ModelRegistry) GetCrossProviderPoolModel(alias, provider string) string {
+	return r.crossProviderPoolManager.GetPoolModel(alias, provider)
+}
+
+func (r *ModelRegistry) RegisterCrossProviderPools(pools []CrossProviderPool) {
+	r.crossProviderPoolManager.RegisterPools(pools)
 }
