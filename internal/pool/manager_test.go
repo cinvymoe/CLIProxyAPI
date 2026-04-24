@@ -1,4 +1,4 @@
-package registry
+package pool
 
 import (
 	"testing"
@@ -6,10 +6,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestCrossProviderPoolManager_RegisterPool(t *testing.T) {
-	m := NewCrossProviderPoolManager()
+func TestManager_RegisterPool(t *testing.T) {
+	m := NewManager()
 
-	pool := CrossProviderPool{
+	p := CrossProviderPool{
 		Alias: "test-model",
 		Models: []CrossProviderPoolModel{
 			{Provider: "provider1", Model: "model-a"},
@@ -17,16 +17,16 @@ func TestCrossProviderPoolManager_RegisterPool(t *testing.T) {
 		},
 	}
 
-	m.RegisterPool(pool)
+	m.RegisterPool(p)
 
 	assert.True(t, m.IsPoolAlias("test-model"))
 	assert.False(t, m.IsPoolAlias("other-model"))
 }
 
-func TestCrossProviderPoolManager_GetPoolProviders(t *testing.T) {
-	m := NewCrossProviderPoolManager()
+func TestManager_GetPoolProviders(t *testing.T) {
+	m := NewManager()
 
-	pool := CrossProviderPool{
+	p := CrossProviderPool{
 		Alias: "test-model",
 		Models: []CrossProviderPoolModel{
 			{Provider: "provider1", Model: "model-a"},
@@ -34,7 +34,7 @@ func TestCrossProviderPoolManager_GetPoolProviders(t *testing.T) {
 		},
 	}
 
-	m.RegisterPool(pool)
+	m.RegisterPool(p)
 
 	providers := m.GetPoolProviders("test-model")
 	assert.Equal(t, []string{"provider1", "provider2"}, providers)
@@ -43,10 +43,10 @@ func TestCrossProviderPoolManager_GetPoolProviders(t *testing.T) {
 	assert.Nil(t, nilProviders)
 }
 
-func TestCrossProviderPoolManager_GetPoolModel(t *testing.T) {
-	m := NewCrossProviderPoolManager()
+func TestManager_GetPoolModel(t *testing.T) {
+	m := NewManager()
 
-	pool := CrossProviderPool{
+	p := CrossProviderPool{
 		Alias: "test-model",
 		Models: []CrossProviderPoolModel{
 			{Provider: "provider1", Model: "model-a"},
@@ -54,7 +54,7 @@ func TestCrossProviderPoolManager_GetPoolModel(t *testing.T) {
 		},
 	}
 
-	m.RegisterPool(pool)
+	m.RegisterPool(p)
 
 	assert.Equal(t, "model-a", m.GetPoolModel("test-model", "provider1"))
 	assert.Equal(t, "model-b", m.GetPoolModel("test-model", "provider2"))
@@ -62,8 +62,8 @@ func TestCrossProviderPoolManager_GetPoolModel(t *testing.T) {
 	assert.Equal(t, "", m.GetPoolModel("nonexistent", "provider1"))
 }
 
-func TestCrossProviderPoolManager_RegisterPools(t *testing.T) {
-	m := NewCrossProviderPoolManager()
+func TestManager_RegisterPools(t *testing.T) {
+	m := NewManager()
 
 	pools := []CrossProviderPool{
 		{
@@ -88,34 +88,34 @@ func TestCrossProviderPoolManager_RegisterPools(t *testing.T) {
 	assert.Equal(t, "m2", m.GetPoolModel("model-2", "p2"))
 }
 
-func TestCrossProviderPoolManager_Clear(t *testing.T) {
-	m := NewCrossProviderPoolManager()
+func TestManager_Clear(t *testing.T) {
+	m := NewManager()
 
-	pool := CrossProviderPool{
+	p := CrossProviderPool{
 		Alias: "test-model",
 		Models: []CrossProviderPoolModel{
 			{Provider: "provider1", Model: "model-a"},
 		},
 	}
 
-	m.RegisterPool(pool)
+	m.RegisterPool(p)
 	assert.True(t, m.IsPoolAlias("test-model"))
 
 	m.Clear()
 	assert.False(t, m.IsPoolAlias("test-model"))
 }
 
-func TestCrossProviderPoolManager_GetPool(t *testing.T) {
-	m := NewCrossProviderPoolManager()
+func TestManager_GetPool(t *testing.T) {
+	m := NewManager()
 
-	pool := CrossProviderPool{
+	p := CrossProviderPool{
 		Alias: "test-model",
 		Models: []CrossProviderPoolModel{
 			{Provider: "provider1", Model: "model-a"},
 		},
 	}
 
-	m.RegisterPool(pool)
+	m.RegisterPool(p)
 
 	result := m.GetPool("test-model")
 	assert.NotNil(t, result)
@@ -127,8 +127,8 @@ func TestCrossProviderPoolManager_GetPool(t *testing.T) {
 	assert.Nil(t, nilResult)
 }
 
-func TestCrossProviderPoolManager_GetAllPoolAliases(t *testing.T) {
-	m := NewCrossProviderPoolManager()
+func TestManager_GetAllPoolAliases(t *testing.T) {
+	m := NewManager()
 
 	pools := []CrossProviderPool{
 		{Alias: "model-1", Models: []CrossProviderPoolModel{{Provider: "p1", Model: "m1"}}},
@@ -142,10 +142,10 @@ func TestCrossProviderPoolManager_GetAllPoolAliases(t *testing.T) {
 	assert.Len(t, aliases, 3)
 }
 
-func TestCrossProviderPoolManager_ThreadSafety(t *testing.T) {
-	m := NewCrossProviderPoolManager()
+func TestManager_ThreadSafety(t *testing.T) {
+	m := NewManager()
 
-	pool := CrossProviderPool{
+	p := CrossProviderPool{
 		Alias: "test-model",
 		Models: []CrossProviderPoolModel{
 			{Provider: "provider1", Model: "model-a"},
@@ -156,7 +156,7 @@ func TestCrossProviderPoolManager_ThreadSafety(t *testing.T) {
 
 	go func() {
 		for i := 0; i < 1000; i++ {
-			m.RegisterPool(pool)
+			m.RegisterPool(p)
 			_ = m.IsPoolAlias("test-model")
 			_ = m.GetPoolProviders("test-model")
 			_ = m.GetPoolModel("test-model", "provider1")
@@ -170,7 +170,7 @@ func TestCrossProviderPoolManager_ThreadSafety(t *testing.T) {
 			_ = m.GetPoolProviders("test-model")
 			_ = m.GetPoolModel("test-model", "provider1")
 			m.Clear()
-			m.RegisterPool(pool)
+			m.RegisterPool(p)
 		}
 		done <- true
 	}()
@@ -179,4 +179,89 @@ func TestCrossProviderPoolManager_ThreadSafety(t *testing.T) {
 	<-done
 
 	assert.True(t, m.IsPoolAlias("test-model"))
+}
+
+func TestResolver_IsPool(t *testing.T) {
+	m := NewManager()
+	r := NewResolver(m)
+
+	p := CrossProviderPool{
+		Alias: "my-pool",
+		Models: []CrossProviderPoolModel{
+			{Provider: "p1", Model: "m1"},
+		},
+	}
+	m.RegisterPool(p)
+
+	assert.True(t, r.IsPool("my-pool"))
+	assert.False(t, r.IsPool("no-such-pool"))
+}
+
+func TestResolver_ResolveModel(t *testing.T) {
+	m := NewManager()
+	r := NewResolver(m)
+
+	p := CrossProviderPool{
+		Alias: "my-pool",
+		Models: []CrossProviderPoolModel{
+			{Provider: "p1", Model: "resolved-a"},
+			{Provider: "p2", Model: "resolved-b"},
+		},
+	}
+	m.RegisterPool(p)
+
+	resolved, isPool := r.ResolveModel("my-pool", "p1")
+	assert.True(t, isPool)
+	assert.Equal(t, "resolved-a", resolved)
+
+	resolved, isPool = r.ResolveModel("my-pool", "p2")
+	assert.True(t, isPool)
+	assert.Equal(t, "resolved-b", resolved)
+
+	resolved, isPool = r.ResolveModel("my-pool", "p3")
+	assert.True(t, isPool)
+	assert.Equal(t, "", resolved)
+
+	resolved, isPool = r.ResolveModel("not-a-pool", "p1")
+	assert.False(t, isPool)
+	assert.Equal(t, "", resolved)
+}
+
+func TestResolver_PoolProviders(t *testing.T) {
+	m := NewManager()
+	r := NewResolver(m)
+
+	p := CrossProviderPool{
+		Alias: "my-pool",
+		Models: []CrossProviderPoolModel{
+			{Provider: "p1", Model: "m1"},
+			{Provider: "p2", Model: "m2"},
+		},
+	}
+	m.RegisterPool(p)
+
+	assert.Equal(t, []string{"p1", "p2"}, r.PoolProviders("my-pool"))
+	assert.Nil(t, r.PoolProviders("not-a-pool"))
+}
+
+func TestSanitizePools(t *testing.T) {
+	pools := []CrossProviderPool{
+		{Alias: "  pool-1  ", Models: []CrossProviderPoolModel{{Provider: " p1 ", Model: " m1 "}}},
+		{Alias: "", Models: []CrossProviderPoolModel{{Provider: "p2", Model: "m2"}}},
+		{Alias: "pool-1", Models: []CrossProviderPoolModel{{Provider: "p3", Model: "m3"}}},
+		{Alias: "pool-2", Models: []CrossProviderPoolModel{{Provider: "", Model: "m4"}}},
+		{Alias: "pool-3", Models: []CrossProviderPoolModel{{Provider: "p5", Model: ""}}},
+	}
+
+	result := SanitizePools(pools)
+
+	assert.Len(t, result, 1)
+	assert.Equal(t, "pool-1", result[0].Alias)
+	assert.Equal(t, "p1", result[0].Models[0].Provider)
+	assert.Equal(t, "m1", result[0].Models[0].Model)
+}
+
+func TestSanitizePools_Empty(t *testing.T) {
+	assert.Nil(t, SanitizePools(nil))
+	assert.Empty(t, SanitizePools([]CrossProviderPool{}))
 }

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/pool"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
@@ -115,6 +116,10 @@ type Config struct {
 
 	// OpenAICompatibility defines OpenAI API compatibility configurations for external providers.
 	OpenAICompatibility []OpenAICompatibility `yaml:"openai-compatibility" json:"openai-compatibility"`
+
+	// CrossProviderPool defines virtual model aliases that route to multiple providers.
+	// Requests to a pool alias will round-robin across the configured providers.
+	CrossProviderPool []pool.CrossProviderPool `yaml:"cross-provider-pool,omitempty" json:"cross-provider-pool,omitempty"`
 
 	// VertexCompatAPIKey defines Vertex AI-compatible API key configurations for third-party providers.
 	// Used for services that use Vertex AI-style paths but with simple API key authentication.
@@ -754,6 +759,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	// Validate raw payload rules and drop invalid entries.
 	cfg.SanitizePayloadRules()
+
+	// Sanitize cross-provider pool configuration.
+	cfg.CrossProviderPool = pool.SanitizePools(cfg.CrossProviderPool)
 
 	// NOTE: Legacy migration persistence is intentionally disabled together with
 	// startup legacy migration to keep startup read-only for config.yaml.

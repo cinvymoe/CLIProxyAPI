@@ -303,6 +303,9 @@ func (s *authScheduler) pickMixed(ctx context.Context, providers []string, model
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	registryRef := registry.GetGlobalRegistry()
+	poolResolver := registryRef.PoolResolver()
+	isCrossProviderPool := poolResolver.IsPool(modelKey)
 	if pinnedAuthID != "" {
 		providerKey := s.authProviders[pinnedAuthID]
 		if providerKey == "" || !containsProvider(normalized, providerKey) {
@@ -312,7 +315,13 @@ func (s *authScheduler) pickMixed(ctx context.Context, providers []string, model
 		if providerState == nil {
 			return nil, "", &Error{Code: "auth_not_found", Message: "no auth available"}
 		}
-		shard := providerState.ensureModelLocked(modelKey, time.Now())
+		resolvedModelKey := modelKey
+		if isCrossProviderPool {
+			if resolved, isPool := poolResolver.ResolveModel(modelKey, providerKey); isPool {
+				resolvedModelKey = canonicalModelKey(resolved)
+			}
+		}
+		shard := providerState.ensureModelLocked(resolvedModelKey, time.Now())
 		predicate := func(entry *scheduledAuth) bool {
 			if entry == nil || entry.auth == nil || entry.auth.ID != pinnedAuthID {
 				return false
@@ -331,6 +340,7 @@ func (s *authScheduler) pickMixed(ctx context.Context, providers []string, model
 
 	predicate := triedPredicate(tried)
 	candidateShards := make([]*modelScheduler, len(normalized))
+	candidateModelKeys := make([]string, len(normalized)) // resolved model key per provider
 	bestPriority := 0
 	hasCandidate := false
 	now := time.Now()
@@ -339,7 +349,15 @@ func (s *authScheduler) pickMixed(ctx context.Context, providers []string, model
 		if providerState == nil {
 			continue
 		}
-		shard := providerState.ensureModelLocked(modelKey, now)
+		// For cross-provider pools, resolve the actual model for this provider
+		resolvedModelKey := modelKey
+		if isCrossProviderPool {
+			if resolved, isPool := poolResolver.ResolveModel(modelKey, providerKey); isPool {
+				resolvedModelKey = canonicalModelKey(resolved)
+			}
+		}
+		candidateModelKeys[providerIndex] = resolvedModelKey
+		shard := providerState.ensureModelLocked(resolvedModelKey, now)
 		candidateShards[providerIndex] = shard
 		if shard == nil {
 			continue
@@ -433,12 +451,22 @@ func (s *authScheduler) mixedUnavailableErrorLocked(providers []string, model st
 	total := 0
 	cooldownCount := 0
 	earliest := time.Time{}
+	modelKey := canonicalModelKey(model)
+	registryRef := registry.GetGlobalRegistry()
+	poolResolver := registryRef.PoolResolver()
+	isCrossProviderPool := poolResolver.IsPool(modelKey)
 	for _, providerKey := range providers {
 		providerState := s.providers[providerKey]
 		if providerState == nil {
 			continue
 		}
-		shard := providerState.ensureModelLocked(canonicalModelKey(model), now)
+		resolvedModelKey := modelKey
+		if isCrossProviderPool {
+			if resolved, isPool := poolResolver.ResolveModel(modelKey, providerKey); isPool {
+				resolvedModelKey = canonicalModelKey(resolved)
+			}
+		}
+		shard := providerState.ensureModelLocked(resolvedModelKey, now)
 		if shard == nil {
 			continue
 		}

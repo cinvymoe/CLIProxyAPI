@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/thinking"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
@@ -810,6 +811,11 @@ func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string
 	// custom model registrations that include thinking suffixes.
 	if len(providers) == 0 && baseModel != resolvedModelName {
 		providers = util.GetProviderName(resolvedModelName)
+	}
+
+	// Check if this is a cross-provider pool alias
+	if poolProviders := registry.GetGlobalRegistry().PoolResolver().PoolProviders(baseModel); len(poolProviders) > 0 {
+		providers = poolProviders
 	}
 
 	if len(providers) == 0 {

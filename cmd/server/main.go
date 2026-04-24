@@ -441,6 +441,8 @@ func main() {
 	}
 	managementasset.SetCurrentConfig(cfg)
 
+	registry.GetGlobalRegistry().RegisterCrossProviderPools(cfg.CrossProviderPool)
+
 	// Create login options to be used in authentication flows.
 	options := &cmd.LoginOptions{
 		NoBrowser:    noBrowser,

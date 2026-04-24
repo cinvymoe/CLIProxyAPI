@@ -522,6 +522,16 @@ func preserveRequestedModelSuffix(requestedModel, resolved string) string {
 
 func (m *Manager) executionModelCandidates(auth *Auth, routeModel string) []string {
 	requestedModel := rewriteModelForAuth(routeModel, auth)
+
+	// For cross-provider pools, resolve the actual model for this provider
+	registryRef := registry.GetGlobalRegistry()
+	modelKey := canonicalModelKey(requestedModel)
+	if auth != nil {
+		if resolved, isPool := registryRef.PoolResolver().ResolveModel(modelKey, strings.ToLower(strings.TrimSpace(auth.Provider))); isPool && resolved != "" {
+			requestedModel = resolved
+		}
+	}
+
 	requestedModel = m.applyOAuthModelAlias(auth, requestedModel)
 	if pool := m.resolveOpenAICompatUpstreamModelPool(auth, requestedModel); len(pool) > 0 {
 		if len(pool) == 1 {
@@ -1470,12 +1480,20 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 		debugLogAuthSelection(entry, auth, provider, req.Model)
 		publishSelectedAuthMetadata(opts.Metadata, auth.ID)
 
+		// Rewrite model for cross-provider pool if needed
+		if upstreamModel, isPool := registry.GetGlobalRegistry().PoolResolver().ResolveModel(routeModel, provider); isPool {
+			if upstreamModel != "" && upstreamModel != routeModel {
+				routeModel = upstreamModel
+			}
+		}
+
 		tried[auth.ID] = struct{}{}
 		execCtx := ctx
 		if rt := m.roundTripperFor(auth); rt != nil {
 			execCtx = context.WithValue(execCtx, roundTripperContextKey{}, rt)
 			execCtx = context.WithValue(execCtx, "cliproxy.roundtripper", rt)
 		}
+
 		models, pooled := m.preparedExecutionModels(auth, routeModel)
 		if len(models) == 0 {
 			continue
@@ -2657,7 +2675,14 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 		if _, used := tried[candidate.ID]; used {
 			continue
 		}
-		if modelKey != "" && !m.authSupportsRouteModel(registryRef, candidate, model) {
+		// For cross-provider pools, resolve the actual model for this provider
+		authCheckModel := model
+		if resolved, isPool := registryRef.PoolResolver().ResolveModel(modelKey, provider); isPool {
+			if resolved != "" {
+				authCheckModel = resolved
+			}
+		}
+		if modelKey != "" && !m.authSupportsRouteModel(registryRef, candidate, authCheckModel) {
 			continue
 		}
 		candidates = append(candidates, candidate)
@@ -2786,7 +2811,14 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 		if _, ok := m.executors[providerKey]; !ok {
 			continue
 		}
-		if modelKey != "" && !m.authSupportsRouteModel(registryRef, candidate, model) {
+		// For cross-provider pools, resolve the actual model for this provider
+		authCheckModel := model
+		if resolved, isPool := registryRef.PoolResolver().ResolveModel(modelKey, providerKey); isPool {
+			if resolved != "" {
+				authCheckModel = resolved
+			}
+		}
+		if modelKey != "" && !m.authSupportsRouteModel(registryRef, candidate, authCheckModel) {
 			continue
 		}
 		candidates = append(candidates, candidate)

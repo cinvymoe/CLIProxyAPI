@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/pool"
 	misc "github.com/router-for-me/CLIProxyAPI/v6/internal/misc"
 	log "github.com/sirupsen/logrus"
 )
@@ -126,7 +127,7 @@ type ModelRegistry struct {
 	// hook is an optional callback sink for model registration changes
 	hook ModelRegistryHook
 	// crossProviderPoolManager manages cross-provider pool aliases
-	crossProviderPoolManager *CrossProviderPoolManager
+	crossProviderPoolManager *pool.Manager
 }
 
 // Global model registry instance
@@ -143,7 +144,7 @@ func GetGlobalRegistry() *ModelRegistry {
 			clientProviders:          make(map[string]string),
 			availableModelsCache:     make(map[string]availableModelsCacheEntry),
 			mutex:                    &sync.RWMutex{},
-			crossProviderPoolManager: NewCrossProviderPoolManager(),
+			crossProviderPoolManager: pool.NewManager(),
 		}
 	})
 	return globalRegistry
@@ -1337,4 +1338,8 @@ func (r *ModelRegistry) GetCrossProviderPoolModel(alias, provider string) string
 
 func (r *ModelRegistry) RegisterCrossProviderPools(pools []CrossProviderPool) {
 	r.crossProviderPoolManager.RegisterPools(pools)
+}
+
+func (r *ModelRegistry) PoolResolver() pool.PoolResolver {
+	return pool.NewResolver(r.crossProviderPoolManager)
 }
