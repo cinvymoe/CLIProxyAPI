@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -62,7 +63,7 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 	// Get all available models
 	allModels := h.Models()
 
-	// Filter to only include the 4 required fields: id, object, created, owned_by
+	// Build response with id, object, created, owned_by, limit, and modalities
 	filteredModels := make([]map[string]any, len(allModels))
 	for i, model := range allModels {
 		filteredModel := map[string]any{
@@ -80,6 +81,18 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 			filteredModel["owned_by"] = ownedBy
 		}
 
+		// Add limit structure if any limit field exists
+		limit := buildLimitStructure(model)
+		if limit != nil {
+			filteredModel["limit"] = limit
+		}
+
+		// Add modalities structure if any modality field exists
+		modalities := buildModalitiesStructure(model)
+		if modalities != nil {
+			filteredModel["modalities"] = modalities
+		}
+
 		filteredModels[i] = filteredModel
 	}
 
@@ -87,6 +100,54 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 		"object": "list",
 		"data":   filteredModels,
 	})
+}
+
+// buildLimitStructure creates the limit structure from model fields.
+// Returns nil if no limit fields are present.
+func buildLimitStructure(model map[string]any) map[string]any {
+	limit := make(map[string]any)
+
+	if contextLength, ok := model["context_length"].(int); ok && contextLength > 0 {
+		limit["context"] = contextLength
+	}
+	if inputLimit, ok := model["input_limit"].(int); ok && inputLimit > 0 {
+		limit["input"] = inputLimit
+	}
+	if maxCompletionTokens, ok := model["max_completion_tokens"].(int); ok && maxCompletionTokens > 0 {
+		limit["output"] = maxCompletionTokens
+	}
+
+	if len(limit) == 0 {
+		return nil
+	}
+	return limit
+}
+
+// buildModalitiesStructure creates the modalities structure from model fields.
+// Returns nil if no modality fields are present.
+func buildModalitiesStructure(model map[string]any) map[string]any {
+	modalities := make(map[string]any)
+
+	if inputModalities, ok := model["supported_input_modalities"].([]string); ok && len(inputModalities) > 0 {
+		modalities["input"] = normalizeModalities(inputModalities)
+	}
+	if outputModalities, ok := model["supported_output_modalities"].([]string); ok && len(outputModalities) > 0 {
+		modalities["output"] = normalizeModalities(outputModalities)
+	}
+
+	if len(modalities) == 0 {
+		return nil
+	}
+	return modalities
+}
+
+// normalizeModalities converts modality names to lowercase (e.g., "TEXT" -> "text").
+func normalizeModalities(modalities []string) []string {
+	result := make([]string, len(modalities))
+	for i, m := range modalities {
+		result[i] = strings.ToLower(m)
+	}
+	return result
 }
 
 // ChatCompletions handles the /v1/chat/completions endpoint.

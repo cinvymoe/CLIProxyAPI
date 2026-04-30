@@ -44,6 +44,8 @@ type ModelInfo struct {
 	SupportedGenerationMethods []string `json:"supportedGenerationMethods,omitempty"`
 	// ContextLength is the context window size
 	ContextLength int `json:"context_length,omitempty"`
+	// InputLimit is the maximum input tokens (separate from context window)
+	InputLimit int `json:"input_limit,omitempty"`
 	// MaxCompletionTokens is the maximum completion tokens
 	MaxCompletionTokens int `json:"max_completion_tokens,omitempty"`
 	// SupportedParameters lists supported parameters
@@ -1139,11 +1141,20 @@ func (r *ModelRegistry) convertModelToMap(model *ModelInfo, handlerType string) 
 		if model.ContextLength > 0 {
 			result["context_length"] = model.ContextLength
 		}
+		if model.InputLimit > 0 {
+			result["input_limit"] = model.InputLimit
+		}
 		if model.MaxCompletionTokens > 0 {
 			result["max_completion_tokens"] = model.MaxCompletionTokens
 		}
 		if len(model.SupportedParameters) > 0 {
 			result["supported_parameters"] = append([]string(nil), model.SupportedParameters...)
+		}
+		if len(model.SupportedInputModalities) > 0 {
+			result["supported_input_modalities"] = append([]string(nil), model.SupportedInputModalities...)
+		}
+		if len(model.SupportedOutputModalities) > 0 {
+			result["supported_output_modalities"] = append([]string(nil), model.SupportedOutputModalities...)
 		}
 		return result
 

@@ -614,9 +614,33 @@ type OpenAICompatibilityModel struct {
 	// Alias is the model name alias that clients will use to reference this model.
 	Alias string `yaml:"alias" json:"alias"`
 
+	// Limit configures the token limits for this model.
+	Limit *ModelLimit `yaml:"limit,omitempty" json:"limit,omitempty"`
+
+	// Modalities configures the input/output modalities for this model.
+	Modalities *ModelModalities `yaml:"modalities,omitempty" json:"modalities,omitempty"`
+
 	// Thinking configures the thinking/reasoning capability for this model.
 	// If nil, the model defaults to level-based reasoning with levels ["low", "medium", "high"].
 	Thinking *registry.ThinkingSupport `yaml:"thinking,omitempty" json:"thinking,omitempty"`
+}
+
+// ModelLimit represents token limits for a model.
+type ModelLimit struct {
+	// Context is the total context window size in tokens.
+	Context int `yaml:"context,omitempty" json:"context,omitempty"`
+	// Input is the maximum input tokens (separate from context window).
+	Input int `yaml:"input,omitempty" json:"input,omitempty"`
+	// Output is the maximum output/completion tokens.
+	Output int `yaml:"output,omitempty" json:"output,omitempty"`
+}
+
+// ModelModalities represents input/output modalities for a model.
+type ModelModalities struct {
+	// Input lists supported input modalities (e.g., "text", "image").
+	Input []string `yaml:"input,omitempty" json:"input,omitempty"`
+	// Output lists supported output modalities (e.g., "text").
+	Output []string `yaml:"output,omitempty" json:"output,omitempty"`
 }
 
 func (m OpenAICompatibilityModel) GetName() string  { return m.Name }

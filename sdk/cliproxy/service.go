@@ -995,7 +995,7 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 						if thinking == nil {
 							thinking = &registry.ThinkingSupport{Levels: []string{"low", "medium", "high"}}
 						}
-						ms = append(ms, &ModelInfo{
+						info := &ModelInfo{
 							ID:          modelID,
 							Object:      "model",
 							Created:     time.Now().Unix(),
@@ -1004,7 +1004,17 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 							DisplayName: modelID,
 							UserDefined: false,
 							Thinking:    thinking,
-						})
+						}
+						if m.Limit != nil {
+							info.ContextLength = m.Limit.Context
+							info.InputLimit = m.Limit.Input
+							info.MaxCompletionTokens = m.Limit.Output
+						}
+						if m.Modalities != nil {
+							info.SupportedInputModalities = m.Modalities.Input
+							info.SupportedOutputModalities = m.Modalities.Output
+						}
+						ms = append(ms, info)
 					}
 					// Register and return
 					if len(ms) > 0 {
