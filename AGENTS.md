@@ -16,6 +16,10 @@ go build -o test-output ./cmd/server && rm test-output # Verify compile (REQUIRE
 ```
 - Common flags: `--config <path>`, `--tui`, `--standalone`, `--local-model`, `--no-browser`, `--oauth-callback-port <port>`
 
+## Docker Operations
+- **重启服务**: 使用 `rebuild.sh` 脚本，不要重新编译 Docker 镜像
+- `rebuild.sh` 会重新构建二进制并重启容器，无需重建镜像
+
 ## Config
 - Default config: `config.yaml` (template: `config.example.yaml`)
 - `.env` is auto-loaded from the working directory

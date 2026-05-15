@@ -160,4 +160,60 @@ type Config struct {
 
 	// Payload defines default and override rules for provider payload parameters.
 	Payload PayloadConfig `yaml:"payload" json:"payload"`
+
+	// XunfeiRetry configures retry behavior for Xunfei (Spark) API error codes 10012 (system busy) and 11210 (not enough credits).
+	XunfeiRetry XunfeiRetryConfig `yaml:"xunfei-retry" json:"xunfei-retry"`
+}
+
+type XunfeiRetryConfig struct {
+	MaxRetries  int     `yaml:"max-retries,omitempty" json:"max-retries,omitempty"`
+	InitialWait int     `yaml:"initial-wait-ms,omitempty" json:"initial-wait-ms,omitempty"`
+	MaxWait     int     `yaml:"max-wait-ms,omitempty" json:"max-wait-ms,omitempty"`
+	Multiplier  float64 `yaml:"multiplier,omitempty" json:"multiplier,omitempty"`
+}
+
+func (c XunfeiRetryConfig) EffectiveMaxRetries() int {
+	if c.MaxRetries <= 0 {
+		return 3
+	}
+	return c.MaxRetries
+}
+
+func (c XunfeiRetryConfig) EffectiveInitialWait() int {
+	if c.InitialWait <= 0 {
+		return 10000
+	}
+	return c.InitialWait
+}
+
+func (c XunfeiRetryConfig) EffectiveMaxWait() int {
+	if c.MaxWait <= 0 {
+		return 16000
+	}
+	return c.MaxWait
+}
+
+func (c XunfeiRetryConfig) EffectiveMultiplier() float64 {
+	if c.Multiplier <= 0 {
+		return 2.0
+	}
+	return c.Multiplier
+}
+
+func (c XunfeiRetryConfig) WaitDurations() []int {
+	maxRetries := c.EffectiveMaxRetries()
+	initialWait := c.EffectiveInitialWait()
+	maxWait := c.EffectiveMaxWait()
+	multiplier := c.EffectiveMultiplier()
+
+	waits := make([]int, maxRetries)
+	current := float64(initialWait)
+	for i := 0; i < maxRetries; i++ {
+		waits[i] = int(current)
+		current *= multiplier
+		if int(current) > maxWait {
+			current = float64(maxWait)
+		}
+	}
+	return waits
 }

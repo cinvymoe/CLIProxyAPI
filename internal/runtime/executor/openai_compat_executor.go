@@ -193,6 +193,65 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 		b, _ := io.ReadAll(httpResp.Body)
 		helps.AppendAPIResponseChunk(ctx, e.cfg, b)
 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
+		cls := classifyXunfeiError(b)
+		if cls == xunfeiErrRetryable {
+			waits := e.cfg.XunfeiRetry.WaitDurations()
+			for i, wait := range waits {
+				helps.LogWithRequestID(ctx).Debugf("xunfei retryable error, attempt %d/%d, waiting %dms", i+1, len(waits), wait)
+				if errSleep := sleepWithContext(ctx, time.Duration(wait)*time.Millisecond); errSleep != nil {
+					return resp, errSleep
+				}
+				httpReqRetry, errRetry := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(translated))
+				if errRetry != nil {
+					return resp, errRetry
+				}
+				httpReqRetry.Header.Set("Content-Type", "application/json")
+				if apiKey != "" {
+					httpReqRetry.Header.Set("Authorization", "Bearer "+apiKey)
+				}
+				httpReqRetry.Header.Set("User-Agent", "cli-proxy-openai-compat")
+				util.ApplyCustomHeadersFromAttrs(httpReqRetry, attrs)
+				httpRespRetry, errDo := httpClient.Do(httpReqRetry)
+				if errDo != nil {
+					helps.RecordAPIResponseError(ctx, e.cfg, errDo)
+					return resp, errDo
+				}
+				helps.RecordAPIResponseMetadata(ctx, e.cfg, httpRespRetry.StatusCode, httpRespRetry.Header.Clone())
+				if httpRespRetry.StatusCode >= 200 && httpRespRetry.StatusCode < 300 {
+					body, errRead := io.ReadAll(httpRespRetry.Body)
+					if errClose := httpRespRetry.Body.Close(); errClose != nil {
+						log.Errorf("openai compat executor: close retry response body error: %v", errClose)
+					}
+					if errRead != nil {
+						helps.RecordAPIResponseError(ctx, e.cfg, errRead)
+						return resp, errRead
+					}
+					helps.AppendAPIResponseChunk(ctx, e.cfg, body)
+					reporter.Publish(ctx, helps.ParseOpenAIUsage(body))
+					reporter.EnsurePublished(ctx)
+					var param any
+					out := sdktranslator.TranslateNonStream(ctx, to, from, req.Model, opts.OriginalRequest, translated, body, &param)
+					resp = cliproxyexecutor.Response{Payload: out, Headers: httpRespRetry.Header.Clone()}
+					return resp, nil
+				}
+				bRetry, _ := io.ReadAll(httpRespRetry.Body)
+				if errClose := httpRespRetry.Body.Close(); errClose != nil {
+					log.Errorf("openai compat executor: close retry response body error: %v", errClose)
+				}
+				helps.AppendAPIResponseChunk(ctx, e.cfg, bRetry)
+				helps.LogWithRequestID(ctx).Debugf("retry attempt %d failed, status: %d, body: %s", i+1, httpRespRetry.StatusCode, helps.SummarizeErrorBody(httpRespRetry.Header.Get("Content-Type"), bRetry))
+				clsRetry := classifyXunfeiError(bRetry)
+				if clsRetry != xunfeiErrRetryable {
+					cls = clsRetry
+					b = bRetry
+					break
+				}
+			}
+		}
+		if cls != xunfeiErrNone {
+			err = xunfeiStatusErr(cls, string(b))
+			return resp, err
+		}
 		err = statusErr{code: httpResp.StatusCode, msg: string(b)}
 		return resp, err
 	}
@@ -402,9 +461,59 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 		if errClose := httpResp.Body.Close(); errClose != nil {
 			log.Errorf("openai compat executor: close response body error: %v", errClose)
 		}
+		cls := classifyXunfeiError(b)
+		if cls == xunfeiErrRetryable {
+			waits := e.cfg.XunfeiRetry.WaitDurations()
+			for i, wait := range waits {
+				helps.LogWithRequestID(ctx).Debugf("xunfei stream retryable error, attempt %d/%d, waiting %dms", i+1, len(waits), wait)
+				if errSleep := sleepWithContext(ctx, time.Duration(wait)*time.Millisecond); errSleep != nil {
+					return nil, errSleep
+				}
+				httpReqRetry, errRetry := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(translated))
+				if errRetry != nil {
+					return nil, errRetry
+				}
+				httpReqRetry.Header.Set("Content-Type", "application/json")
+				if apiKey != "" {
+					httpReqRetry.Header.Set("Authorization", "Bearer "+apiKey)
+				}
+				httpReqRetry.Header.Set("User-Agent", "cli-proxy-openai-compat")
+				util.ApplyCustomHeadersFromAttrs(httpReqRetry, attrs)
+				httpReqRetry.Header.Set("Accept", "text/event-stream")
+				httpReqRetry.Header.Set("Cache-Control", "no-cache")
+				httpRespRetry, errDo := httpClient.Do(httpReqRetry)
+				if errDo != nil {
+					helps.RecordAPIResponseError(ctx, e.cfg, errDo)
+					return nil, errDo
+				}
+				helps.RecordAPIResponseMetadata(ctx, e.cfg, httpRespRetry.StatusCode, httpRespRetry.Header.Clone())
+				if httpRespRetry.StatusCode >= 200 && httpRespRetry.StatusCode < 300 {
+					// Success on retry — fall through to stream processing below
+					httpResp = httpRespRetry
+					goto streamSuccess
+				}
+				bRetry, _ := io.ReadAll(httpRespRetry.Body)
+				if errClose := httpRespRetry.Body.Close(); errClose != nil {
+					log.Errorf("openai compat executor: close retry response body error: %v", errClose)
+				}
+				helps.AppendAPIResponseChunk(ctx, e.cfg, bRetry)
+				helps.LogWithRequestID(ctx).Debugf("stream retry attempt %d failed, status: %d, body: %s", i+1, httpRespRetry.StatusCode, helps.SummarizeErrorBody(httpRespRetry.Header.Get("Content-Type"), bRetry))
+				clsRetry := classifyXunfeiError(bRetry)
+				if clsRetry != xunfeiErrRetryable {
+					cls = clsRetry
+					b = bRetry
+					break
+				}
+			}
+		}
+		if cls != xunfeiErrNone {
+			err = xunfeiStatusErr(cls, string(b))
+			return nil, err
+		}
 		err = statusErr{code: httpResp.StatusCode, msg: string(b)}
 		return nil, err
 	}
+streamSuccess:
 	out := make(chan cliproxyexecutor.StreamChunk)
 	go func() {
 		defer close(out)
@@ -413,7 +522,28 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 				log.Errorf("openai compat executor: close response body error: %v", errClose)
 			}
 		}()
-		scanner := bufio.NewScanner(httpResp.Body)
+		peekReader := bufio.NewReader(httpResp.Body)
+		peekBytes, errPeek := peekReader.Peek(1024)
+		if errPeek == nil {
+			cls := classifyXunfeiError(peekBytes)
+			if cls != xunfeiErrNone {
+				body, _ := io.ReadAll(peekReader)
+				if cls == xunfeiErrRetryable {
+					retryAfter := time.Duration(e.cfg.XunfeiRetry.EffectiveInitialWait()) * time.Millisecond
+					select {
+					case out <- cliproxyexecutor.StreamChunk{Err: xunfeiStatusErrWithRetryAfter(cls, retryAfter)}:
+					case <-ctx.Done():
+					}
+				} else {
+					select {
+					case out <- cliproxyexecutor.StreamChunk{Err: xunfeiStatusErr(cls, string(body))}:
+					case <-ctx.Done():
+					}
+				}
+				return
+			}
+		}
+		scanner := bufio.NewScanner(peekReader)
 		scanner.Buffer(nil, 52_428_800) // 50MB
 		claudeInputTokens := helps.NewClaudeInputTokenState(from, to, responseFormat, originalPayload)
 		var param any
@@ -505,6 +635,29 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 					break scanLoop
 				}
 				continue
+			}
+
+			if bytes.Contains(trimmedLine, []byte(`"code"`)) && (bytes.Contains(trimmedLine, []byte(`10010`)) || bytes.Contains(trimmedLine, []byte(`10012`)) || bytes.Contains(trimmedLine, []byte(`11210`))) {
+				jsonBody := trimmedLine
+				if bytes.HasPrefix(trimmedLine, []byte("data: ")) {
+					jsonBody = trimmedLine[6:]
+				}
+				cls := classifyXunfeiError(jsonBody)
+				if cls != xunfeiErrNone {
+					if cls == xunfeiErrRetryable {
+						retryAfter := time.Duration(e.cfg.XunfeiRetry.EffectiveInitialWait()) * time.Millisecond
+						select {
+						case out <- cliproxyexecutor.StreamChunk{Err: xunfeiStatusErrWithRetryAfter(cls, retryAfter)}:
+						case <-ctx.Done():
+						}
+					} else {
+						select {
+						case out <- cliproxyexecutor.StreamChunk{Err: xunfeiStatusErr(cls, string(jsonBody))}:
+						case <-ctx.Done():
+						}
+					}
+					return
+				}
 			}
 			if bytes.HasPrefix(trimmedLine, []byte("data:")) {
 				frameData = append(frameData, bytes.Clone(bytes.TrimSpace(trimmedLine[len("data:"):])))
@@ -1021,3 +1174,109 @@ func (e statusErr) Error() string {
 }
 func (e statusErr) StatusCode() int            { return e.code }
 func (e statusErr) RetryAfter() *time.Duration { return e.retryAfter }
+
+type xunfeiErrorClass int
+
+const (
+	xunfeiErrNone xunfeiErrorClass = iota
+	xunfeiErrRetryable
+	xunfeiErrBadRequest
+	xunfeiErrForbidden
+)
+
+var xunfeiRetryableCodes = map[int]struct{}{
+	10010: {},
+	10012: {},
+	11210: {},
+}
+
+func classifyXunfeiError(body []byte) xunfeiErrorClass {
+	if len(body) == 0 {
+		return xunfeiErrNone
+	}
+	if !bytes.Contains(body, []byte(`"code"`)) && !bytes.Contains(body, []byte(`"Code"`)) {
+		return xunfeiErrNone
+	}
+
+	var nested struct {
+		Error struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &nested); err == nil && nested.Error.Code != 0 {
+		if _, ok := xunfeiRetryableCodes[nested.Error.Code]; ok {
+			return classifyXunfeiSubType(nested.Error.Code, nested.Error.Message)
+		}
+	}
+
+	var flat struct {
+		Code      int    `json:"code"`
+		Message   string `json:"message"`
+		Msg       string `json:"msg"`
+		Sid       string `json:"Sid"`
+		TimeStamp string `json:"timeStamp"`
+	}
+	if err := json.Unmarshal(body, &flat); err == nil && flat.Code != 0 {
+		msg := flat.Message
+		if msg == "" {
+			msg = flat.Msg
+		}
+		if _, ok := xunfeiRetryableCodes[flat.Code]; ok {
+			return classifyXunfeiSubType(flat.Code, msg)
+		}
+	}
+
+	return xunfeiErrNone
+}
+
+func classifyXunfeiSubType(code int, message string) xunfeiErrorClass {
+	if code == 10010 {
+		return xunfeiErrRetryable
+	}
+	if code == 11210 {
+		return xunfeiErrRetryable
+	}
+	if strings.Contains(message, "status code: 400") || strings.Contains(message, "must have 'content' or 'tool_calls'") {
+		return xunfeiErrBadRequest
+	}
+	if strings.Contains(message, "status code: 403") || strings.Contains(message, "has not activated") {
+		return xunfeiErrForbidden
+	}
+	return xunfeiErrRetryable
+}
+
+func xunfeiStatusErr(cls xunfeiErrorClass, rawBody string) statusErr {
+	switch cls {
+	case xunfeiErrBadRequest:
+		return statusErr{code: http.StatusBadRequest, msg: "Xunfei API error (code 10012): Bad request - assistant message must have 'content' or 'tool_calls'"}
+	case xunfeiErrForbidden:
+		return statusErr{code: http.StatusForbidden, msg: "Xunfei API error (code 10012): Forbidden - model not activated or account lacks permission"}
+	case xunfeiErrRetryable:
+		retryAfter := time.Duration(0)
+		return statusErr{code: http.StatusTooManyRequests, msg: "Xunfei API error (code 10010/10012/11210): System is busy or insufficient credits, please try again later", retryAfter: &retryAfter}
+	default:
+		return statusErr{code: http.StatusInternalServerError, msg: rawBody}
+	}
+}
+
+func xunfeiStatusErrWithRetryAfter(cls xunfeiErrorClass, retryAfter time.Duration) statusErr {
+	err := xunfeiStatusErr(cls, "")
+	err.retryAfter = &retryAfter
+	return err
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func isXunfeiRetryableError(body []byte) bool {
+	return classifyXunfeiError(body) == xunfeiErrRetryable
+}
