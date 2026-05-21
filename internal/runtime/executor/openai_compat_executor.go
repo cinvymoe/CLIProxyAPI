@@ -1180,6 +1180,7 @@ type xunfeiErrorClass int
 const (
 	xunfeiErrNone xunfeiErrorClass = iota
 	xunfeiErrRetryable
+	xunfeiErrOverloaded
 	xunfeiErrBadRequest
 	xunfeiErrForbidden
 )
@@ -1187,6 +1188,7 @@ const (
 var xunfeiRetryableCodes = map[int]struct{}{
 	10010: {},
 	10012: {},
+	10222: {},
 	11210: {},
 }
 
@@ -1231,19 +1233,31 @@ func classifyXunfeiError(body []byte) xunfeiErrorClass {
 }
 
 func classifyXunfeiSubType(code int, message string) xunfeiErrorClass {
+	// 10010: Engine Busy → overloaded (503), not quota-related
 	if code == 10010 {
-		return xunfeiErrRetryable
+		return xunfeiErrOverloaded
 	}
+	// 10222: AbnormalNetworkError (gRPC EOF/unavailable) → overloaded (503), transient infra error
+	if code == 10222 {
+		return xunfeiErrOverloaded
+	}
+	// 11210: Insufficient credits → retryable (429), quota-related
 	if code == 11210 {
 		return xunfeiErrRetryable
 	}
+	// 10012: multi-meaning code — classify by message content
 	if strings.Contains(message, "status code: 400") || strings.Contains(message, "must have 'content' or 'tool_calls'") {
 		return xunfeiErrBadRequest
 	}
 	if strings.Contains(message, "status code: 403") || strings.Contains(message, "has not activated") {
 		return xunfeiErrForbidden
 	}
-	return xunfeiErrRetryable
+	// 10012 with "busy" or "system busy" → overloaded (503), not quota-related
+	if strings.Contains(strings.ToLower(message), "busy") {
+		return xunfeiErrOverloaded
+	}
+	// 10012 fallback: treat as overloaded since the most common 10012 is system busy
+	return xunfeiErrOverloaded
 }
 
 func xunfeiStatusErr(cls xunfeiErrorClass, rawBody string) statusErr {
@@ -1252,9 +1266,11 @@ func xunfeiStatusErr(cls xunfeiErrorClass, rawBody string) statusErr {
 		return statusErr{code: http.StatusBadRequest, msg: "Xunfei API error (code 10012): Bad request - assistant message must have 'content' or 'tool_calls'"}
 	case xunfeiErrForbidden:
 		return statusErr{code: http.StatusForbidden, msg: "Xunfei API error (code 10012): Forbidden - model not activated or account lacks permission"}
+	case xunfeiErrOverloaded:
+		return statusErr{code: http.StatusServiceUnavailable, msg: "Xunfei API error (code 10010/10012): Engine busy or system overloaded, please try again later"}
 	case xunfeiErrRetryable:
 		retryAfter := time.Duration(0)
-		return statusErr{code: http.StatusTooManyRequests, msg: "Xunfei API error (code 10010/10012/11210): System is busy or insufficient credits, please try again later", retryAfter: &retryAfter}
+		return statusErr{code: http.StatusTooManyRequests, msg: "Xunfei API error (code 11210): Insufficient credits or rate limit exceeded, please try again later", retryAfter: &retryAfter}
 	default:
 		return statusErr{code: http.StatusInternalServerError, msg: rawBody}
 	}
@@ -1264,6 +1280,11 @@ func xunfeiStatusErrWithRetryAfter(cls xunfeiErrorClass, retryAfter time.Duratio
 	err := xunfeiStatusErr(cls, "")
 	err.retryAfter = &retryAfter
 	return err
+}
+
+func isXunfeiRetryableOrOverloaded(body []byte) bool {
+	cls := classifyXunfeiError(body)
+	return cls == xunfeiErrRetryable || cls == xunfeiErrOverloaded
 }
 
 func sleepWithContext(ctx context.Context, d time.Duration) error {

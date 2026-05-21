@@ -25,26 +25,26 @@ func TestClassifyXunfeiError(t *testing.T) {
 			body:     []byte(`{"error":{"message":"some error"}}`),
 			expected: xunfeiErrNone,
 		},
-		// 10012 system busy → retryable
+		// 10012 system busy → overloaded (503)
 		{
 			name:     "xunfei 10012 nested error - system busy",
 			body:     []byte(`{"error":{"code":10012,"message":"EngineInternalError:The system is busy, please try again later."}}`),
-			expected: xunfeiErrRetryable,
+			expected: xunfeiErrOverloaded,
 		},
 		{
 			name:     "xunfei 10012 flat error with sid - system busy",
 			body:     []byte(`{"code":10012,"message":"EngineInternalError:The system is busy, please try again later.","sid":"cht000be954@dx19d95a2001eb958700"}`),
-			expected: xunfeiErrRetryable,
+			expected: xunfeiErrOverloaded,
 		},
 		{
 			name:     "xunfei 10012 actual format with msg and Sid - system busy",
 			body:     []byte(`{"code":10012,"msg":"EngineInternalError:The system is busy, please try again later.","Sid":"cht000ba7f9@dx19d99825f12b992700","timeStamp":"11:35:51.86"}`),
-			expected: xunfeiErrRetryable,
+			expected: xunfeiErrOverloaded,
 		},
 		{
 			name:     "xunfei 10012 flat error - system busy",
 			body:     []byte(`{"code":10012,"message":"EngineInternalError:The system is busy, please try again later."}`),
-			expected: xunfeiErrRetryable,
+			expected: xunfeiErrOverloaded,
 		},
 		// 10012 bad request → not retryable
 		{
@@ -84,16 +84,27 @@ func TestClassifyXunfeiError(t *testing.T) {
 			body:     []byte(`{"code":11210,"message":"NotEnoughCvError:insufficient credits"}`),
 			expected: xunfeiErrRetryable,
 		},
-		// 10010 engine busy → retryable
+		// 10010 engine busy → overloaded (503)
 		{
 			name:     "xunfei 10010 nested error",
 			body:     []byte(`{"error":{"code":10010,"message":"RecvFromEngineError:Engine Busy"}}`),
-			expected: xunfeiErrRetryable,
+			expected: xunfeiErrOverloaded,
 		},
 		{
 			name:     "xunfei 10010 flat error with Sid",
 			body:     []byte(`{"code":10010,"msg":"RecvFromEngineError:Engine Busy","Sid":"cht000b53f6@dx19e2b7df50cb8ab700","timeStamp":"19:57:39.388"}`),
-			expected: xunfeiErrRetryable,
+			expected: xunfeiErrOverloaded,
+		},
+		// 10222 abnormal network error → overloaded (503)
+		{
+			name:     "xunfei 10222 abnormal network error nested",
+			body:     []byte(`{"error":{"code":10222,"message":"AbnormalNetworkError:rpc error: code = Unavailable desc = error reading from server: EOF"}}`),
+			expected: xunfeiErrOverloaded,
+		},
+		{
+			name:     "xunfei 10222 abnormal network error flat with Sid",
+			body:     []byte(`{"code":10222,"msg":"AbnormalNetworkError:rpc error: code = Unavailable desc = error reading from server: EOF","Sid":"cht000b24b6@dx19e499ffc32b87f700","timeStamp":"16:24:44.695"}`),
+			expected: xunfeiErrOverloaded,
 		},
 		// Non-xunfei errors
 		{
@@ -155,6 +166,11 @@ func TestXunfeiStatusErr(t *testing.T) {
 			expectedCode: http.StatusForbidden,
 		},
 		{
+			name:         "overloaded returns 503",
+			cls:          xunfeiErrOverloaded,
+			expectedCode: http.StatusServiceUnavailable,
+		},
+		{
 			name:         "retryable returns 429",
 			cls:          xunfeiErrRetryable,
 			expectedCode: http.StatusTooManyRequests,
@@ -190,8 +206,11 @@ func TestXunfeiStatusErrWithRetryAfter(t *testing.T) {
 }
 
 func TestIsXunfeiRetryableError(t *testing.T) {
-	if !isXunfeiRetryableError([]byte(`{"error":{"code":10012,"message":"The system is busy"}}`)) {
-		t.Error("system busy should be retryable")
+	if isXunfeiRetryableError([]byte(`{"error":{"code":10012,"message":"The system is busy"}}`)) {
+		t.Error("system busy should be overloaded, not retryable")
+	}
+	if !isXunfeiRetryableOrOverloaded([]byte(`{"error":{"code":10012,"message":"The system is busy"}}`)) {
+		t.Error("system busy should be retryable-or-overloaded")
 	}
 	if !isXunfeiRetryableError([]byte(`{"error":{"code":11210,"message":"NotEnoughCvError"}}`)) {
 		t.Error("11210 should be retryable")
