@@ -14,6 +14,10 @@ services:
     #   - .env
     environment:
       DEPLOY: ${DEPLOY:-}
+      HTTP_PROXY: http://192.168.110.78:7890
+      HTTPS_PROXY: http://192.168.110.78:7890
+      ALL_PROXY: socks5h://192.168.110.78:7890
+      NO_PROXY: localhost,127.0.0.1,::1
     ports:
       - "8317:8317"
       - "8085:8085"
