@@ -38,6 +38,7 @@ AGENTS.override.md
 # Tooling metadata
 .vscode/*
 .worktrees/
+.omo/*
 .codex/*
 .claude/*
 .claude

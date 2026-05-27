@@ -3633,7 +3633,7 @@
       "type": "xai",
       "display_name": "Grok 4.5",
       "name": "grok-4.5",
-      "description": "SpaceXAI's intelligent coding model for agentic software, engineering, and workflow tasks.",
+      "description": "SpaceXAI's intelligent coding model for agentic software engineering, workflows, and agentic tasks.",
       "context_length": 500000,
       "max_completion_tokens": 65536,
       "thinking": {

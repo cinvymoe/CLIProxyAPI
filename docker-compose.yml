@@ -13,6 +13,7 @@ services:
     # env_file:
     #   - .env
     environment:
+      TZ: Asia/Shanghai
       DEPLOY: ${DEPLOY:-}
       HTTP_PROXY: http://192.168.110.78:7890
       HTTPS_PROXY: http://192.168.110.78:7890

@@ -143,6 +143,8 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 	}
 	reporter.SetTranslatedReasoningEffort(translated, to.String())
 
+	xunfeiOriginalPayload := make([]byte, len(translated))
+	copy(xunfeiOriginalPayload, translated)
 	translated = sanitizeXunfeiPayload(translated)
 
 	url := strings.TrimSuffix(baseURL, "/") + endpoint
@@ -251,6 +253,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 			}
 		}
 		if cls != xunfeiErrNone {
+			logXunfeiErrorDetail(ctx, xunfeiOriginalPayload, translated, b)
 			err = xunfeiStatusErr(cls, string(b))
 			return resp, err
 		}
@@ -413,6 +416,8 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 	translated = helps.SetBoolIfDifferent(translated, "stream_options.include_usage", true)
 	reporter.SetTranslatedReasoningEffort(translated, to.String())
 
+	xunfeiOriginalPayload := make([]byte, len(translated))
+	copy(xunfeiOriginalPayload, translated)
 	translated = sanitizeXunfeiPayload(translated)
 
 	url := strings.TrimSuffix(baseURL, "/") + "/chat/completions"
@@ -511,6 +516,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 			}
 		}
 		if cls != xunfeiErrNone {
+			logXunfeiErrorDetail(ctx, xunfeiOriginalPayload, translated, b)
 			err = xunfeiStatusErr(cls, string(b))
 			return nil, err
 		}
@@ -533,6 +539,7 @@ streamSuccess:
 			if cls != xunfeiErrNone {
 				body, _ := io.ReadAll(peekReader)
 				helps.LogWithRequestID(ctx).Debugf("xunfei stream peek error: class=%d, body=%s", cls, helps.SummarizeErrorBody("application/json", body))
+				logXunfeiErrorDetail(ctx, xunfeiOriginalPayload, translated, body)
 				if cls == xunfeiErrRetryable {
 					retryAfter := time.Duration(e.cfg.XunfeiRetry.EffectiveInitialWait()) * time.Millisecond
 					select {
@@ -650,6 +657,7 @@ streamSuccess:
 				cls := classifyXunfeiError(jsonBody)
 				if cls != xunfeiErrNone {
 					helps.LogWithRequestID(ctx).Debugf("xunfei stream inline error: class=%d, body=%s", cls, helps.SummarizeErrorBody("application/json", jsonBody))
+					logXunfeiErrorDetail(ctx, xunfeiOriginalPayload, translated, jsonBody)
 					if cls == xunfeiErrRetryable {
 						retryAfter := time.Duration(e.cfg.XunfeiRetry.EffectiveInitialWait()) * time.Millisecond
 						select {
@@ -1181,37 +1189,85 @@ func (e statusErr) Error() string {
 func (e statusErr) StatusCode() int            { return e.code }
 func (e statusErr) RetryAfter() *time.Duration { return e.retryAfter }
 
-// sanitizeXunfeiPayload cleans assistant messages that simultaneously contain
-// both non-empty "content" and "tool_calls". The Xunfei ModelArts backend rejects
-// such messages with error code 10012 ("assistant message must have 'content' or
-// 'tool_calls'"). When both fields are present, we keep tool_calls and set content
-// to null, which matches the OpenAI convention for tool-call-only assistant turns.
+func logXunfeiErrorDetail(ctx context.Context, originalPayload, payload []byte, responseBody []byte) {
+	if originalPayload != nil {
+		helps.LogWithRequestID(ctx).Debugf("xunfei error detail: request payload (original)=%s", helps.SummarizeErrorBody("application/json", originalPayload))
+	}
+	helps.LogWithRequestID(ctx).Debugf("xunfei error detail: request payload (sanitized)=%s", helps.SummarizeErrorBody("application/json", payload))
+	msgs := gjson.GetBytes(payload, "messages").Array()
+	for i, msg := range msgs {
+		if msg.Get("role").String() == "assistant" {
+			helps.LogWithRequestID(ctx).Debugf("xunfei error detail: message[%d] role=assistant content=%s tool_calls=%s", i, msg.Get("content").Raw, msg.Get("tool_calls").Raw)
+		}
+	}
+	helps.LogWithRequestID(ctx).Debugf("xunfei error detail: xunfei response=%s", string(responseBody))
+}
+
+// sanitizeXunfeiPayload cleans the request payload for Xunfei ModelArts compatibility.
+// Xunfei ModelArts rejects requests with error code 10012 in two cases:
+//  1. Assistant messages with empty content ("") and no tool_calls → removed entirely.
+//  2. Assistant messages with both non-empty content and tool_calls → content set to null
+//     (matching OpenAI convention for tool-call-only turns).
 func sanitizeXunfeiPayload(translated []byte) []byte {
 	messages := gjson.GetBytes(translated, "messages").Array()
-	modified := false
+
+	type contentFix struct {
+		index int
+	}
+	var contentFixes []contentFix
+	var removeIndices []int
+
 	for i, msg := range messages {
 		if msg.Get("role").String() != "assistant" {
 			continue
 		}
+
 		contentVal := msg.Get("content")
 		toolCallsVal := msg.Get("tool_calls")
-		hasContent := contentVal.Exists() && contentVal.Type != gjson.Null &&
-			(contentVal.String() != "" || contentVal.IsArray() && len(contentVal.Array()) > 0)
+
+		hasContent := contentVal.Exists() && contentVal.Type != gjson.Null
+		if contentVal.Type == gjson.String && contentVal.String() == "" {
+			hasContent = false
+		}
+
 		hasToolCalls := toolCallsVal.Exists() && toolCallsVal.Type != gjson.Null &&
 			toolCallsVal.IsArray() && len(toolCallsVal.Array()) > 0
+
+		if !hasContent && !hasToolCalls {
+			removeIndices = append(removeIndices, i)
+			log.Debugf("xunfei sanitize: removing empty assistant message[%d]", i)
+			continue
+		}
+
 		if hasContent && hasToolCalls {
-			key := fmt.Sprintf("messages.%d.content", i)
-			updated, errSet := sjson.SetBytes(translated, key, nil)
-			if errSet == nil {
-				translated = updated
-				modified = true
-				log.Debugf("xunfei sanitize: set content=null on assistant message[%d] (had both content and tool_calls)", i)
-			}
+			contentFixes = append(contentFixes, contentFix{index: i})
 		}
 	}
-	if modified {
-		log.Debugf("xunfei sanitize: payload was modified to strip content from assistant messages with tool_calls")
+
+	for _, fix := range contentFixes {
+		key := fmt.Sprintf("messages.%d.content", fix.index)
+		updated, err := sjson.SetBytes(translated, key, nil)
+		if err == nil {
+			translated = updated
+			log.Debugf("xunfei sanitize: set content=null on assistant message[%d] (had both content and tool_calls)", fix.index)
+		}
 	}
+
+	for i := len(removeIndices) - 1; i >= 0; i-- {
+		key := fmt.Sprintf("messages.%d", removeIndices[i])
+		updated, err := sjson.DeleteBytes(translated, key)
+		if err == nil {
+			translated = updated
+		}
+	}
+
+	if len(removeIndices) > 0 {
+		log.Debugf("xunfei sanitize: removed %d empty assistant messages at original indices %v", len(removeIndices), removeIndices)
+	}
+	if len(contentFixes) > 0 {
+		log.Debugf("xunfei sanitize: set content=null on %d assistant messages with both content and tool_calls", len(contentFixes))
+	}
+
 	return translated
 }
 
