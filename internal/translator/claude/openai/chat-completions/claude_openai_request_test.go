@@ -454,6 +454,88 @@ func TestConvertOpenAIRequestToClaude_SystemOnlyInputKeepsFallbackUserMessage(t 
 	}
 }
 
+func TestConvertOpenAIRequestToClaude_ReasoningContentMappedToThinking(t *testing.T) {
+	inputJSON := `{
+		"model": "claude-sonnet-4-5",
+		"messages": [
+			{"role": "user", "content": "Hello"},
+			{"role": "assistant", "content": "I will help", "reasoning_content": "Let me think about this", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "do_work", "arguments": "{}"}}]}
+		]
+	}`
+
+	result := ConvertOpenAIRequestToClaude("claude-sonnet-4-5", []byte(inputJSON), false)
+	resultJSON := gjson.ParseBytes(result)
+	messages := resultJSON.Get("messages").Array()
+
+	assistantMsg := messages[1]
+	foundThinking := false
+	for _, part := range assistantMsg.Get("content").Array() {
+		if part.Get("type").String() == "thinking" {
+			foundThinking = true
+			if got := part.Get("thinking").String(); got != "Let me think about this" {
+				t.Fatalf("Expected thinking text %q, got %q", "Let me think about this", got)
+			}
+			break
+		}
+	}
+	if !foundThinking {
+		t.Fatalf("Expected thinking block in assistant message, got: %s", assistantMsg.Raw)
+	}
+}
+
+func TestConvertOpenAIRequestToClaude_ThinkingInjectedForToolCallsWithoutReasoning(t *testing.T) {
+	inputJSON := `{
+		"model": "claude-sonnet-4-5",
+		"reasoning_effort": "high",
+		"messages": [
+			{"role": "user", "content": "Hello"},
+			{"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "do_work", "arguments": "{}"}}]}
+		]
+	}`
+
+	result := ConvertOpenAIRequestToClaude("claude-sonnet-4-5", []byte(inputJSON), false)
+	resultJSON := gjson.ParseBytes(result)
+
+	thinkingType := resultJSON.Get("thinking.type").String()
+	if thinkingType != "enabled" {
+		t.Fatalf("Expected thinking.type %q, got %q", "enabled", thinkingType)
+	}
+
+	messages := resultJSON.Get("messages").Array()
+	assistantMsg := messages[1]
+	foundThinking := false
+	for _, part := range assistantMsg.Get("content").Array() {
+		if part.Get("type").String() == "thinking" {
+			foundThinking = true
+			break
+		}
+	}
+	if !foundThinking {
+		t.Fatalf("Expected thinking block injected for assistant+tool_calls without reasoning_content, got: %s", assistantMsg.Raw)
+	}
+}
+
+func TestConvertOpenAIRequestToClaude_NoThinkingInjectedWhenThinkingDisabled(t *testing.T) {
+	inputJSON := `{
+		"model": "claude-sonnet-4-5",
+		"messages": [
+			{"role": "user", "content": "Hello"},
+			{"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "do_work", "arguments": "{}"}}]}
+		]
+	}`
+
+	result := ConvertOpenAIRequestToClaude("claude-sonnet-4-5", []byte(inputJSON), false)
+	resultJSON := gjson.ParseBytes(result)
+	messages := resultJSON.Get("messages").Array()
+	assistantMsg := messages[1]
+
+	for _, part := range assistantMsg.Get("content").Array() {
+		if part.Get("type").String() == "thinking" {
+			t.Fatalf("Should not inject thinking block when thinking is not enabled, got: %s", assistantMsg.Raw)
+		}
+	}
+}
+
 func TestConvertOpenAIRequestToClaude_PreservesContentPartCacheControl(t *testing.T) {
 	inputJSON := `{
 		"model": "gpt-4.1",

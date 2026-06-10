@@ -171,6 +171,9 @@ func convertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream,
 	// Stream configuration to enable or disable streaming responses
 	out, _ = sjson.SetBytes(out, "stream", stream)
 
+	thinkingType := gjson.GetBytes(out, "thinking.type").String()
+	thinkingEnabled := thinkingType == "enabled" || thinkingType == "adaptive"
+
 	// Process messages and transform them to Claude Code format
 	if messages := root.Get("messages"); messages.Exists() && messages.IsArray() {
 		systemBlocks := make([][]byte, 0)
@@ -221,6 +224,19 @@ func convertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream,
 					}
 				}
 
+				hasThinkingBlock := false
+
+				if role == "assistant" {
+					if rc := message.Get("reasoning_content"); rc.Exists() && strings.TrimSpace(rc.String()) != "" {
+						if !preserveEmptyThinkingBlocks {
+							thinkingPart := []byte(`{"type":"thinking","thinking":""}`)
+							thinkingPart, _ = sjson.SetBytes(thinkingPart, "thinking", rc.String())
+							contentBlocks = append(contentBlocks, thinkingPart)
+						}
+						hasThinkingBlock = true
+					}
+				}
+
 				// Handle content based on its type
 				if contentResult.Exists() && contentResult.Type == gjson.String && contentResult.String() != "" {
 					part := []byte(`{"type":"text","text":""}`)
@@ -238,6 +254,9 @@ func convertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream,
 
 				// Handle tool calls (for assistant messages)
 				if toolCalls := message.Get("tool_calls"); toolCalls.Exists() && toolCalls.IsArray() && role == "assistant" {
+					if thinkingEnabled && !hasThinkingBlock {
+						contentBlocks = append(contentBlocks, []byte(`{"type":"thinking","thinking":""}`))
+					}
 					toolCalls.ForEach(func(_, toolCall gjson.Result) bool {
 						if toolCall.Get("type").String() == "function" {
 							toolCallID := toolCall.Get("id").String()

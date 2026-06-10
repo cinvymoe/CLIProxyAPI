@@ -211,6 +211,22 @@ func convertOpenAIResponsesRequestToClaude(modelName string, inputRawJSON []byte
 			combined := make([][]byte, 0, len(pendingParts)+len(pendingToolUseParts))
 			combined = append(combined, pendingParts...)
 			combined = append(combined, pendingToolUseParts...)
+			// Claude rejects assistant tool_call messages when thinking is
+			// enabled but no thinking block precedes the tool calls. Inject an
+			// empty thinking block unless one is already present.
+			hasThinking := false
+			for _, p := range pendingParts {
+				if gjson.GetBytes(p, "type").String() == "thinking" {
+					hasThinking = true
+					break
+				}
+			}
+			if !hasThinking {
+				thinkingType := gjson.GetBytes(out, "thinking.type").String()
+				if thinkingType == "enabled" || thinkingType == "adaptive" {
+					combined = append([][]byte{[]byte(`{"type":"thinking","thinking":""}`)}, combined...)
+				}
+			}
 			parts = combined
 		}
 		if len(parts) > 0 {
