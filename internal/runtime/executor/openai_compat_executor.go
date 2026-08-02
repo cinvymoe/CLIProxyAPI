@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/textproto"
 	"strconv"
@@ -184,6 +186,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 	httpClient = reporter.TrackHTTPClient(httpClient)
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
+		err = wrapTransientNetworkError(err)
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return resp, err
 	}
@@ -262,6 +265,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 	}
 	body, err := io.ReadAll(httpResp.Body)
 	if err != nil {
+		err = wrapTransientNetworkError(err)
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return resp, err
 	}
@@ -335,6 +339,7 @@ func (e *OpenAICompatExecutor) executeImages(ctx context.Context, auth *cliproxy
 	httpClient = reporter.TrackHTTPClient(httpClient)
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
+		err = wrapTransientNetworkError(err)
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return resp, err
 	}
@@ -347,6 +352,7 @@ func (e *OpenAICompatExecutor) executeImages(ctx context.Context, auth *cliproxy
 
 	body, errRead := io.ReadAll(httpResp.Body)
 	if errRead != nil {
+		errRead = wrapTransientNetworkError(errRead)
 		helps.RecordAPIResponseError(ctx, e.cfg, errRead)
 		err = errRead
 		return resp, err
@@ -459,6 +465,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 	httpClient = reporter.TrackHTTPClient(httpClient)
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
+		err = wrapTransientNetworkError(err)
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return nil, err
 	}
@@ -697,10 +704,11 @@ streamSuccess:
 			return
 		}
 		if errScan != nil {
-			helps.RecordAPIResponseError(ctx, e.cfg, errScan)
-			reporter.PublishFailure(ctx, errScan)
+			streamErr := wrapTransientNetworkError(errScan)
+			helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
+			reporter.PublishFailure(ctx, streamErr)
 			select {
-			case out <- cliproxyexecutor.StreamChunk{Err: errScan}:
+			case out <- cliproxyexecutor.StreamChunk{Err: streamErr}:
 			case <-ctx.Done():
 			}
 		} else if !seenDone {
@@ -795,6 +803,7 @@ func (e *OpenAICompatExecutor) executeImagesStream(ctx context.Context, auth *cl
 	httpClient = reporter.TrackHTTPClient(httpClient)
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
+		err = wrapTransientNetworkError(err)
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return nil, err
 	}
@@ -1188,6 +1197,27 @@ func (e statusErr) Error() string {
 }
 func (e statusErr) StatusCode() int            { return e.code }
 func (e statusErr) RetryAfter() *time.Duration { return e.retryAfter }
+
+// wrapTransientNetworkError maps transient network failures (e.g. unexpected
+// EOF, connection resets) to a retryable 502 status error so the auth manager
+// can cooldown the model and retry the request. Non-transient errors such as
+// oversized stream lines or context cancellation pass through unchanged.
+func wrapTransientNetworkError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return statusErr{code: http.StatusBadGateway, msg: err.Error()}
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr != nil {
+		return statusErr{code: http.StatusBadGateway, msg: err.Error()}
+	}
+	return err
+}
 
 func logXunfeiErrorDetail(ctx context.Context, originalPayload, payload []byte, responseBody []byte) {
 	if originalPayload != nil {
