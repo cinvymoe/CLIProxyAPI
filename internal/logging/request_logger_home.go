@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/buildinfo"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/home"
 )
 
@@ -214,23 +215,31 @@ func (w *homeStreamingLogWriter) Close() error {
 	}
 
 	responsePayload := w.responseBody.Bytes()
+	upstreamTransport := inferUpstreamTransport(w.apiRequest, nil, w.apiResponse, nil, w.apiWebsocketTime, nil, nil)
+
+	entry := &requestLogEntry{
+		Version:              buildinfo.Version,
+		URL:                  w.url,
+		Method:               w.method,
+		Timestamp:            w.timestamp.Format(time.RFC3339Nano),
+		DownstreamTransport:  "http",
+		UpstreamTransport:    upstreamTransport,
+		RequestHeaders:       w.requestHeaders,
+		RequestBody:          bytesToRawMessage(w.requestBody),
+		APIWebsocketTimeline: string(w.apiWebsocketTime),
+		APIRequest:           string(w.apiRequest),
+		APIResponse:          string(w.apiResponse),
+		ResponseStatus:       w.responseStatus,
+		ResponseHeaders:      w.responseHeaders,
+		ResponseBody:         bytesToRawMessage(responsePayload),
+	}
+	if !w.apiResponseTS.IsZero() {
+		entry.APIResponseTimestamp = w.apiResponseTS.Format(time.RFC3339Nano)
+	}
 
 	var buf bytes.Buffer
-	upstreamTransport := inferUpstreamTransport(w.apiRequest, nil, w.apiResponse, nil, w.apiWebsocketTime, nil, nil)
-	if errWrite := writeRequestInfoWithBody(&buf, w.url, w.method, w.requestHeaders, w.requestBody, "", w.timestamp, "http", upstreamTransport, true); errWrite != nil {
-		return errWrite
-	}
-	if errWrite := writeAPISection(&buf, "=== API WEBSOCKET TIMELINE ===\n", "=== API WEBSOCKET TIMELINE", w.apiWebsocketTime, time.Time{}); errWrite != nil {
-		return errWrite
-	}
-	if errWrite := writeAPISection(&buf, "=== API REQUEST ===\n", "=== API REQUEST", w.apiRequest, time.Time{}); errWrite != nil {
-		return errWrite
-	}
-	if errWrite := writeAPISection(&buf, "=== API RESPONSE ===\n", "=== API RESPONSE", w.apiResponse, w.apiResponseTS); errWrite != nil {
-		return errWrite
-	}
-	if errWrite := writeResponseSection(&buf, w.responseStatus, w.statusWritten, w.responseHeaders, bytes.NewReader(responsePayload), nil, false); errWrite != nil {
-		return errWrite
+	if err := writeJSONLog(&buf, entry); err != nil {
+		return err
 	}
 
 	payload := homeRequestLogPayload{

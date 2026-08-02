@@ -216,7 +216,7 @@ func TestFileRequestLogger_LogRequestWithSourcesWritesLocalLogAndCleansParts(t *
 	if errReadLog != nil {
 		t.Fatalf("read log file: %v", errReadLog)
 	}
-	if !bytes.Contains(raw, []byte("=== WEBSOCKET TIMELINE ===")) {
+	if !bytes.Contains(raw, []byte(`"websocket_timeline"`)) {
 		t.Fatalf("websocket timeline section missing: %s", string(raw))
 	}
 	if !bytes.Contains(raw, []byte("Event: websocket.request")) || !bytes.Contains(raw, []byte("Event: websocket.response")) {

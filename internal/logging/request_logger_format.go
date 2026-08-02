@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +19,63 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	log "github.com/sirupsen/logrus"
 )
+
+// requestLogEntry represents a request log in JSON format.
+type requestLogEntry struct {
+	Version              string              `json:"version"`
+	URL                  string              `json:"url"`
+	Method               string              `json:"method"`
+	Timestamp            string              `json:"timestamp"`
+	DownstreamTransport  string              `json:"downstream_transport,omitempty"`
+	UpstreamTransport    string              `json:"upstream_transport,omitempty"`
+	RequestHeaders       map[string][]string `json:"request_headers,omitempty"`
+	RequestBody          json.RawMessage     `json:"request_body,omitempty"`
+	WebsocketTimeline    string              `json:"websocket_timeline,omitempty"`
+	APIWebsocketTimeline string              `json:"api_websocket_timeline,omitempty"`
+	APIRequest           string              `json:"api_request,omitempty"`
+	APIResponse          string              `json:"api_response,omitempty"`
+	APIResponseTimestamp string              `json:"api_response_timestamp,omitempty"`
+	APIResponseErrors    []apiErrorEntry     `json:"api_response_errors,omitempty"`
+	ResponseStatus       int                 `json:"response_status"`
+	ResponseHeaders      map[string][]string `json:"response_headers,omitempty"`
+	ResponseBody         json.RawMessage     `json:"response_body,omitempty"`
+}
+
+// apiErrorEntry represents a single upstream API error in a structured request log.
+type apiErrorEntry struct {
+	StatusCode int    `json:"status_code"`
+	Error      string `json:"error"`
+}
+
+// bytesToRawMessage converts a byte slice to json.RawMessage.
+// If the data is valid JSON, it is stored as a nested object.
+// Otherwise, it is stored as a JSON string.
+func bytesToRawMessage(data []byte) json.RawMessage {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 {
+		return nil
+	}
+	if json.Valid(data) {
+		return json.RawMessage(data)
+	}
+	// Fall back to quoted string
+	escaped, err := json.Marshal(string(data))
+	if err != nil {
+		return nil
+	}
+	return json.RawMessage(escaped)
+}
+
+// writeJSONLog marshals a requestLogEntry as indented JSON and writes it to w.
+func writeJSONLog(w io.Writer, entry *requestLogEntry) error {
+	data, err := json.MarshalIndent(entry, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal request log: %w", err)
+	}
+	data = append(data, '\n')
+	_, err = w.Write(data)
+	return err
+}
 
 func (l *FileRequestLogger) writeNonStreamingLog(
 	w io.Writer,
@@ -47,31 +105,85 @@ func (l *FileRequestLogger) writeNonStreamingLog(
 	isWebsocketTranscript := hasSectionPayload(websocketTimeline) || hasFileBodySourcePayload(websocketTimelineSource)
 	downstreamTransport := inferDownstreamTransport(requestHeaders, websocketTimeline, websocketTimelineSource)
 	upstreamTransport := inferUpstreamTransport(apiRequest, apiRequestSource, apiResponse, apiResponseSource, apiWebsocketTimeline, apiWebsocketTimelineSource, apiResponseErrors)
-	if errWrite := writeRequestInfoWithBody(w, url, method, requestHeaders, requestBody, requestBodyPath, requestTimestamp, downstreamTransport, upstreamTransport, !isWebsocketTranscript); errWrite != nil {
-		return errWrite
+
+	// Read request body from temp file if available
+	requestBodyStr := string(requestBody)
+	if requestBodyPath != "" {
+		if data, err := os.ReadFile(requestBodyPath); err == nil {
+			requestBodyStr = string(data)
+		}
 	}
-	if errWrite := writeAPISectionWithSource(w, "=== WEBSOCKET TIMELINE ===\n", "=== WEBSOCKET TIMELINE", websocketTimeline, websocketTimelineSource, time.Time{}); errWrite != nil {
-		return errWrite
+
+	// Read source payloads
+	var wsTimeline, apiWSTimeline, apiReq, apiResp string
+	if websocketTimelineSource != nil {
+		if data, err := websocketTimelineSource.Bytes(); err == nil && len(data) > 0 {
+			wsTimeline = string(data)
+		}
+	} else if len(websocketTimeline) > 0 {
+		wsTimeline = string(websocketTimeline)
 	}
-	if errWrite := writeAPISectionWithSource(w, "=== API WEBSOCKET TIMELINE ===\n", "=== API WEBSOCKET TIMELINE", apiWebsocketTimeline, apiWebsocketTimelineSource, time.Time{}); errWrite != nil {
-		return errWrite
+	if apiWebsocketTimelineSource != nil {
+		if data, err := apiWebsocketTimelineSource.Bytes(); err == nil && len(data) > 0 {
+			apiWSTimeline = string(data)
+		}
+	} else if len(apiWebsocketTimeline) > 0 {
+		apiWSTimeline = string(apiWebsocketTimeline)
 	}
-	if errWrite := writePreformattedAPISectionWithSource(w, "=== API REQUEST ===\n", "=== API REQUEST", apiRequest, apiRequestSource, time.Time{}); errWrite != nil {
-		return errWrite
+	if apiRequestSource != nil {
+		if data, err := apiRequestSource.Bytes(); err == nil && len(data) > 0 {
+			apiReq = string(data)
+		}
+	} else if len(apiRequest) > 0 {
+		apiReq = string(apiRequest)
 	}
-	if errWrite := writeAPIErrorResponses(w, apiResponseErrors); errWrite != nil {
-		return errWrite
+	if apiResponseSource != nil {
+		if data, err := apiResponseSource.Bytes(); err == nil && len(data) > 0 {
+			apiResp = string(data)
+		}
+	} else if len(apiResponse) > 0 {
+		apiResp = string(apiResponse)
 	}
-	if errWrite := writePreformattedAPISectionWithSource(w, "=== API RESPONSE ===\n", "=== API RESPONSE", apiResponse, apiResponseSource, apiResponseTimestamp); errWrite != nil {
-		return errWrite
+
+	// Build error entries
+	var errEntries []apiErrorEntry
+	for _, e := range apiResponseErrors {
+		if e != nil {
+			errEntries = append(errEntries, apiErrorEntry{
+				StatusCode: e.StatusCode,
+				Error:      e.Error.Error(),
+			})
+		}
 	}
+
+	entry := &requestLogEntry{
+		Version:              buildinfo.Version,
+		URL:                  url,
+		Method:               method,
+		Timestamp:            requestTimestamp.Format(time.RFC3339Nano),
+		DownstreamTransport:  downstreamTransport,
+		UpstreamTransport:    upstreamTransport,
+		RequestHeaders:       requestHeaders,
+		RequestBody:          bytesToRawMessage([]byte(requestBodyStr)),
+		WebsocketTimeline:    wsTimeline,
+		APIWebsocketTimeline: apiWSTimeline,
+		APIRequest:           apiReq,
+		APIResponse:          apiResp,
+		APIResponseErrors:    errEntries,
+		ResponseStatus:       statusCode,
+		ResponseHeaders:      responseHeaders,
+		ResponseBody:         bytesToRawMessage(response),
+	}
+	if !apiResponseTimestamp.IsZero() {
+		entry.APIResponseTimestamp = apiResponseTimestamp.Format(time.RFC3339Nano)
+	}
+	// For websocket transcripts, omit the downstream response section
 	if isWebsocketTranscript {
-		// Intentionally omit the generic downstream HTTP response section for websocket
-		// transcripts. The durable session exchange is captured in WEBSOCKET TIMELINE,
-		// and appending a one-off upgrade response snapshot would dilute that transcript.
-		return nil
+		entry.ResponseBody = nil
+		entry.ResponseHeaders = nil
+		entry.ResponseStatus = 0
 	}
-	return writeResponseSection(w, statusCode, true, responseHeaders, bytes.NewReader(response), decompressErr, true)
+	return writeJSONLog(w, entry)
 }
 
 func writeRequestInfoWithBody(

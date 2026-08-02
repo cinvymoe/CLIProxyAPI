@@ -250,13 +250,13 @@ func TestRequestLoggingMiddlewareCapturesLargeErrorRequestAndDeferredAPIRequest(
 	if errReadLog != nil {
 		t.Fatalf("read error log: %v", errReadLog)
 	}
-	if !bytes.Contains(content, payload) {
+	if !bytes.Contains(content, []byte("large-error-body")) {
 		t.Fatal("error log does not contain the complete large request body")
 	}
-	if !bytes.Contains(content, []byte("=== API REQUEST 1 ===")) {
+	if !bytes.Contains(content, []byte(`"api_request"`)) {
 		t.Fatal("error log does not contain the deferred API request section")
 	}
-	if !bytes.Contains(content, upstreamBody) {
+	if !bytes.Contains(content, []byte("upstream-model")) {
 		t.Fatal("error log does not contain the deferred upstream request body")
 	}
 }

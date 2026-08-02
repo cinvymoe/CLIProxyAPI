@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/buildinfo"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -274,30 +275,64 @@ func (w *FileStreamingLogWriter) asyncWriter() {
 }
 
 func (w *FileStreamingLogWriter) writeFinalLog(logFile *os.File) error {
-	if errWrite := writeRequestInfoWithBody(logFile, w.url, w.method, w.requestHeaders, nil, w.requestBodyPath, w.timestamp, "http", inferUpstreamTransport(w.apiRequest, w.apiRequestSource, w.apiResponse, w.apiResponseSource, w.apiWebsocketTimeline, nil, nil), true); errWrite != nil {
-		return errWrite
-	}
-	if errWrite := writeAPISection(logFile, "=== API WEBSOCKET TIMELINE ===\n", "=== API WEBSOCKET TIMELINE", w.apiWebsocketTimeline, time.Time{}); errWrite != nil {
-		return errWrite
-	}
-	if errWrite := writePreformattedAPISectionWithSource(logFile, "=== API REQUEST ===\n", "=== API REQUEST", w.apiRequest, w.apiRequestSource, time.Time{}); errWrite != nil {
-		return errWrite
-	}
-	if errWrite := writePreformattedAPISectionWithSource(logFile, "=== API RESPONSE ===\n", "=== API RESPONSE", w.apiResponse, w.apiResponseSource, w.apiResponseTimestamp); errWrite != nil {
-		return errWrite
-	}
+	upstreamTransport := inferUpstreamTransport(w.apiRequest, w.apiRequestSource, w.apiResponse, w.apiResponseSource, w.apiWebsocketTimeline, nil, nil)
 
-	responseBodyFile, errOpen := os.Open(w.responseBodyPath)
-	if errOpen != nil {
-		return errOpen
-	}
-	defer func() {
-		if errClose := responseBodyFile.Close(); errClose != nil {
-			log.WithError(errClose).Warn("failed to close response body temp file")
+	// Read request body from temp file
+	var requestBodyStr string
+	if w.requestBodyPath != "" {
+		if data, err := os.ReadFile(w.requestBodyPath); err == nil {
+			requestBodyStr = string(data)
 		}
-	}()
+	}
 
-	return writeResponseSection(logFile, w.responseStatus, w.statusWritten, w.responseHeaders, responseBodyFile, nil, false)
+	// Read response body from temp file
+	var responseBodyStr string
+	if w.responseBodyPath != "" {
+		if data, err := os.ReadFile(w.responseBodyPath); err == nil {
+			responseBodyStr = string(data)
+		}
+	}
+
+	// Read source payloads
+	var apiReq, apiResp, apiWSTimeline string
+	if w.apiRequestSource != nil {
+		if data, err := w.apiRequestSource.Bytes(); err == nil && len(data) > 0 {
+			apiReq = string(data)
+		}
+	} else if len(w.apiRequest) > 0 {
+		apiReq = string(w.apiRequest)
+	}
+	if w.apiResponseSource != nil {
+		if data, err := w.apiResponseSource.Bytes(); err == nil && len(data) > 0 {
+			apiResp = string(data)
+		}
+	} else if len(w.apiResponse) > 0 {
+		apiResp = string(w.apiResponse)
+	}
+	if len(w.apiWebsocketTimeline) > 0 {
+		apiWSTimeline = string(w.apiWebsocketTimeline)
+	}
+
+	entry := &requestLogEntry{
+		Version:              buildinfo.Version,
+		URL:                  w.url,
+		Method:               w.method,
+		Timestamp:            w.timestamp.Format(time.RFC3339Nano),
+		DownstreamTransport:  "http",
+		UpstreamTransport:    upstreamTransport,
+		RequestHeaders:       w.requestHeaders,
+		RequestBody:          bytesToRawMessage([]byte(requestBodyStr)),
+		APIWebsocketTimeline: apiWSTimeline,
+		APIRequest:           apiReq,
+		APIResponse:          apiResp,
+		ResponseStatus:       w.responseStatus,
+		ResponseHeaders:      w.responseHeaders,
+		ResponseBody:         bytesToRawMessage([]byte(responseBodyStr)),
+	}
+	if !w.apiResponseTimestamp.IsZero() {
+		entry.APIResponseTimestamp = w.apiResponseTimestamp.Format(time.RFC3339Nano)
+	}
+	return writeJSONLog(logFile, entry)
 }
 
 func (w *FileStreamingLogWriter) cleanupTempFiles() {
