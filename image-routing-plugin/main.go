@@ -66,16 +66,6 @@ type registrationCapability struct {
 	ModelRouter bool `json:"model_router"`
 }
 
-// modelRouteResponse is the plugin-side model.route wire response. T3 replaces
-// the baseline decision; the JSON contract stays snake_case.
-type modelRouteResponse struct {
-	Handled     bool   `json:"handled"`
-	TargetKind  string `json:"target_kind,omitempty"`
-	Target      string `json:"target,omitempty"`
-	TargetModel string `json:"target_model,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-}
-
 func main() {}
 
 //export cliproxy_plugin_init
@@ -153,20 +143,23 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 // complete decision (suffix parsing, provider selection, reasons). Baseline:
 // when enabled, the requested model is listed in models, the body carries an
 // image, and the fallback provider is available, route to the fallback.
+// The response is marshaled as pluginapi.ModelRouteResponse directly: that
+// type has no JSON tags, so it encodes with Go default (camelCase) field names,
+// which is exactly what the host expects when decoding the envelope result.
 func handleModelRoute(raw []byte) ([]byte, error) {
 	var req pluginapi.ModelRouteRequest
 	if errUnmarshal := json.Unmarshal(raw, &req); errUnmarshal != nil {
 		return nil, errUnmarshal
 	}
 	cfg := currentConfig()
-	resp := modelRouteResponse{}
+	resp := pluginapi.ModelRouteResponse{}
 	if cfg.Enabled &&
 		containsString(cfg.Models, req.RequestedModel) &&
 		bytes.Contains(req.Body, []byte(`"image_url"`)) &&
 		containsString(req.AvailableProviders, cfg.FallbackProvider) {
-		resp = modelRouteResponse{
+		resp = pluginapi.ModelRouteResponse{
 			Handled:     true,
-			TargetKind:  string(pluginapi.ModelRouteTargetProvider),
+			TargetKind:  pluginapi.ModelRouteTargetProvider,
 			Target:      cfg.FallbackProvider,
 			TargetModel: cfg.Fallback,
 		}

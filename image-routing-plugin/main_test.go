@@ -62,16 +62,29 @@ func TestHandleMethod_ModelRouteReturnsValidEnvelope(t *testing.T) {
 	if !env.OK {
 		t.Fatalf("envelope = %+v, want ok", env)
 	}
+	// The host decodes the envelope result into pluginapi.ModelRouteResponse,
+	// which has no JSON tags, so the wire format uses Go default field names
+	// (camelCase). Decode with camelCase tags to mirror the host.
 	var resp struct {
-		Handled     bool   `json:"handled"`
-		TargetKind  string `json:"target_kind"`
-		Target      string `json:"target"`
-		TargetModel string `json:"target_model"`
+		Handled     bool   `json:"Handled"`
+		TargetKind  string `json:"TargetKind"`
+		Target      string `json:"Target"`
+		TargetModel string `json:"TargetModel"`
 	}
 	if err := json.Unmarshal(env.Result, &resp); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
 	if !resp.Handled || resp.TargetKind != "provider" || resp.Target != "opencode-go" || resp.TargetModel != "mimo-v2.5" {
 		t.Fatalf("resp = %+v, want handled provider opencode-go mimo-v2.5", resp)
+	}
+	// Round-trip: the same envelope result must decode into the host's
+	// pluginapi.ModelRouteResponse with all fields populated.
+	var hostResp pluginapi.ModelRouteResponse
+	if err := json.Unmarshal(env.Result, &hostResp); err != nil {
+		t.Fatalf("unmarshal into pluginapi.ModelRouteResponse: %v", err)
+	}
+	if !hostResp.Handled || hostResp.TargetKind != pluginapi.ModelRouteTargetProvider ||
+		hostResp.Target != "opencode-go" || hostResp.TargetModel != "mimo-v2.5" {
+		t.Fatalf("hostResp = %+v, want handled provider opencode-go mimo-v2.5", hostResp)
 	}
 }
