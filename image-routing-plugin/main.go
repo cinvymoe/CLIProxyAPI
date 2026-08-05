@@ -37,7 +37,6 @@ extern void cliproxyPluginShutdown(void);
 import "C"
 
 import (
-	"bytes"
 	"encoding/json"
 	"unsafe"
 
@@ -139,41 +138,17 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	}
 }
 
-// handleModelRoute is the T1 baseline routing decision; T3 replaces it with the
-// complete decision (suffix parsing, provider selection, reasons). Baseline:
-// when enabled, the requested model is listed in models, the body carries an
-// image, and the fallback provider is available, route to the fallback.
-// The response is marshaled as pluginapi.ModelRouteResponse directly: that
-// type has no JSON tags, so it encodes with Go default (camelCase) field names,
-// which is exactly what the host expects when decoding the envelope result.
-func handleModelRoute(raw []byte) ([]byte, error) {
+// handleModelRoute decodes the model.route request and returns the decision as
+// the envelope result. The response is marshaled as pluginapi.ModelRouteResponse
+// directly: that type has no JSON tags, so it encodes with Go default
+// (camelCase) field names, which is exactly what the host expects when
+// decoding the envelope result.
+func handleModelRoute(request []byte) ([]byte, error) {
 	var req pluginapi.ModelRouteRequest
-	if errUnmarshal := json.Unmarshal(raw, &req); errUnmarshal != nil {
-		return nil, errUnmarshal
+	if err := json.Unmarshal(request, &req); err != nil {
+		return nil, err
 	}
-	cfg := currentConfig()
-	resp := pluginapi.ModelRouteResponse{}
-	if cfg.Enabled &&
-		containsString(cfg.Models, req.RequestedModel) &&
-		bytes.Contains(req.Body, []byte(`"image_url"`)) &&
-		containsString(req.AvailableProviders, cfg.FallbackProvider) {
-		resp = pluginapi.ModelRouteResponse{
-			Handled:     true,
-			TargetKind:  pluginapi.ModelRouteTargetProvider,
-			Target:      cfg.FallbackProvider,
-			TargetModel: cfg.Fallback,
-		}
-	}
-	return okEnvelope(resp)
-}
-
-func containsString(list []string, want string) bool {
-	for _, item := range list {
-		if item == want {
-			return true
-		}
-	}
-	return false
+	return okEnvelope(decide(req, currentConfig()))
 }
 
 func okEnvelope(v any) ([]byte, error) {
