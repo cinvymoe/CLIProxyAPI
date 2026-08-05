@@ -1,0 +1,209 @@
+package main
+
+/*
+#include <stdint.h>
+#include <stdlib.h>
+
+typedef struct {
+	void* ptr;
+	size_t len;
+} cliproxy_buffer;
+
+typedef int (*cliproxy_host_call_fn)(void*, const char*, const uint8_t*, size_t, cliproxy_buffer*);
+typedef void (*cliproxy_host_free_fn)(void*, size_t);
+
+typedef struct {
+	uint32_t abi_version;
+	void* host_ctx;
+	cliproxy_host_call_fn call;
+	cliproxy_host_free_fn free_buffer;
+} cliproxy_host_api;
+
+typedef int (*cliproxy_plugin_call_fn)(char*, uint8_t*, size_t, cliproxy_buffer*);
+typedef void (*cliproxy_plugin_free_fn)(void*, size_t);
+typedef void (*cliproxy_plugin_shutdown_fn)(void);
+
+typedef struct {
+	uint32_t abi_version;
+	cliproxy_plugin_call_fn call;
+	cliproxy_plugin_free_fn free_buffer;
+	cliproxy_plugin_shutdown_fn shutdown;
+} cliproxy_plugin_api;
+
+extern int cliproxyPluginCall(char*, uint8_t*, size_t, cliproxy_buffer*);
+extern void cliproxyPluginFree(void*, size_t);
+extern void cliproxyPluginShutdown(void);
+*/
+import "C"
+
+import (
+	"bytes"
+	"encoding/json"
+	"unsafe"
+
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+)
+
+type envelope struct {
+	OK     bool            `json:"ok"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  *envelopeError  `json:"error,omitempty"`
+}
+
+type envelopeError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type registration struct {
+	SchemaVersion uint32                 `json:"schema_version"`
+	Metadata      pluginapi.Metadata     `json:"metadata"`
+	Capabilities  registrationCapability `json:"capabilities"`
+}
+
+type registrationCapability struct {
+	ModelRouter bool `json:"model_router"`
+}
+
+// modelRouteResponse is the plugin-side model.route wire response. T3 replaces
+// the baseline decision; the JSON contract stays snake_case.
+type modelRouteResponse struct {
+	Handled     bool   `json:"handled"`
+	TargetKind  string `json:"target_kind,omitempty"`
+	Target      string `json:"target,omitempty"`
+	TargetModel string `json:"target_model,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+}
+
+func main() {}
+
+//export cliproxy_plugin_init
+func cliproxy_plugin_init(host *C.cliproxy_host_api, plugin *C.cliproxy_plugin_api) C.int {
+	if plugin == nil {
+		return 1
+	}
+	plugin.abi_version = C.uint32_t(pluginabi.ABIVersion)
+	plugin.call = C.cliproxy_plugin_call_fn(C.cliproxyPluginCall)
+	plugin.free_buffer = C.cliproxy_plugin_free_fn(C.cliproxyPluginFree)
+	plugin.shutdown = C.cliproxy_plugin_shutdown_fn(C.cliproxyPluginShutdown)
+	return 0
+}
+
+//export cliproxyPluginCall
+func cliproxyPluginCall(method *C.char, request *C.uint8_t, requestLen C.size_t, response *C.cliproxy_buffer) C.int {
+	if response != nil {
+		response.ptr = nil
+		response.len = 0
+	}
+	if method == nil {
+		writeResponse(response, errorEnvelope("invalid_method", "method is required"))
+		return 1
+	}
+	var requestBytes []byte
+	if request != nil && requestLen > 0 {
+		requestBytes = C.GoBytes(unsafe.Pointer(request), C.int(requestLen))
+	}
+	raw, errHandle := handleMethod(C.GoString(method), requestBytes)
+	if errHandle != nil {
+		writeResponse(response, errorEnvelope("plugin_error", errHandle.Error()))
+		return 1
+	}
+	writeResponse(response, raw)
+	return 0
+}
+
+//export cliproxyPluginFree
+func cliproxyPluginFree(ptr unsafe.Pointer, len C.size_t) {
+	if ptr != nil {
+		C.free(ptr)
+	}
+}
+
+//export cliproxyPluginShutdown
+func cliproxyPluginShutdown() {}
+
+func handleMethod(method string, request []byte) ([]byte, error) {
+	switch method {
+	case pluginabi.MethodPluginRegister, pluginabi.MethodPluginReconfigure:
+		applyConfig(request) // replaces routingConfig; keeps last config on parse error
+		return okEnvelope(registration{
+			SchemaVersion: pluginabi.SchemaVersion,
+			Metadata: pluginapi.Metadata{
+				Name:             "image-routing",
+				Version:          "0.1.0",
+				Author:           "router-for-me",
+				GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
+				ConfigFields: []pluginapi.ConfigField{
+					{Name: "fallback", Type: pluginapi.ConfigFieldTypeString, Description: "Model to route image requests to when the requested model is in models."},
+					{Name: "fallback-provider", Type: pluginapi.ConfigFieldTypeString, Description: "Provider channel key that serves the fallback model (e.g. opencode-go)."},
+					{Name: "models", Type: pluginapi.ConfigFieldTypeString, Description: "YAML list of model names treated as not supporting images (e.g. [deepseek-v4-flash])."},
+				},
+			},
+			Capabilities: registrationCapability{ModelRouter: true},
+		})
+	case pluginabi.MethodModelRoute:
+		return handleModelRoute(request)
+	default:
+		return errorEnvelope("unknown_method", "unknown method: "+method), nil
+	}
+}
+
+// handleModelRoute is the T1 baseline routing decision; T3 replaces it with the
+// complete decision (suffix parsing, provider selection, reasons). Baseline:
+// when enabled, the requested model is listed in models, the body carries an
+// image, and the fallback provider is available, route to the fallback.
+func handleModelRoute(raw []byte) ([]byte, error) {
+	var req pluginapi.ModelRouteRequest
+	if errUnmarshal := json.Unmarshal(raw, &req); errUnmarshal != nil {
+		return nil, errUnmarshal
+	}
+	cfg := currentConfig()
+	resp := modelRouteResponse{}
+	if cfg.Enabled &&
+		containsString(cfg.Models, req.RequestedModel) &&
+		bytes.Contains(req.Body, []byte(`"image_url"`)) &&
+		containsString(req.AvailableProviders, cfg.FallbackProvider) {
+		resp = modelRouteResponse{
+			Handled:     true,
+			TargetKind:  string(pluginapi.ModelRouteTargetProvider),
+			Target:      cfg.FallbackProvider,
+			TargetModel: cfg.Fallback,
+		}
+	}
+	return okEnvelope(resp)
+}
+
+func containsString(list []string, want string) bool {
+	for _, item := range list {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
+func okEnvelope(v any) ([]byte, error) {
+	raw, errMarshal := json.Marshal(v)
+	if errMarshal != nil {
+		return nil, errMarshal
+	}
+	return json.Marshal(envelope{OK: true, Result: raw})
+}
+
+func errorEnvelope(code, message string) []byte {
+	raw, _ := json.Marshal(envelope{OK: false, Error: &envelopeError{Code: code, Message: message}})
+	return raw
+}
+
+func writeResponse(response *C.cliproxy_buffer, raw []byte) {
+	if response == nil || len(raw) == 0 {
+		return
+	}
+	ptr := C.CBytes(raw)
+	if ptr == nil {
+		return
+	}
+	response.ptr = ptr
+	response.len = C.size_t(len(raw))
+}
