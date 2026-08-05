@@ -43,7 +43,7 @@ plugins:
 - `plugins.enabled`:主机级插件开关,必须为 `true` 才会加载插件(默认禁用)。
 - `configs.image-routing.enabled`:本插件开关,必填为 `true` 才生效(插件默认禁用)。
 - `fallback`:改路目标模型。
-- `fallback-provider`:改路目标通道(必填)。服务需已配置该通道且凭证可用;若该通道不在当前可用通道中,改路静默跳过(请求按未命中处理)。
+- `fallback-provider`:改路目标通道(必填)。服务需已配置该通道且凭证可用;若该通道不在当前可用通道中,改路静默跳过(请求按未命中处理)。fallback-provider 为通道名,插件自动兼容 openai-compat 通道的 `openai-compatible-` 前缀匹配。
 - `models`:视为不支持图片的模型列表;匹配时去除思考后缀(`/think` 等)、大小写不敏感。
 
 ## 说明

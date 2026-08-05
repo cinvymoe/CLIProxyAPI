@@ -7,6 +7,10 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
+// openAICompatProviderPrefix is the prefix the host adds to openai-compatible
+// channel keys (see internal/util/provider.go).
+const openAICompatProviderPrefix = "openai-compatible-"
+
 // decide implements the model.route decision for image routing.
 // It returns Handled=true only when the requested model is declared as not
 // supporting images, the request body contains image content, and the
@@ -26,16 +30,31 @@ func decide(req pluginapi.ModelRouteRequest, cfg routingConfig) pluginapi.ModelR
 	if !detectImage(req.Body, req.SourceFormat) {
 		return notHandled
 	}
-	if !containsFold(req.AvailableProviders, cfg.FallbackProvider) {
+	target := matchAvailableProvider(req.AvailableProviders, cfg.FallbackProvider)
+	if target == "" {
 		return notHandled
 	}
 	return pluginapi.ModelRouteResponse{
 		Handled:     true,
 		TargetKind:  pluginapi.ModelRouteTargetProvider,
-		Target:      cfg.FallbackProvider,
+		Target:      target,
 		TargetModel: cfg.Fallback,
 		Reason:      "image request routed to configured fallback model",
 	}
+}
+
+// matchAvailableProvider returns the actual available provider key matching the
+// configured provider, either exactly or with the openai-compatible- prefix
+// (case-insensitive, whitespace-trimmed). It returns "" when no key matches.
+func matchAvailableProvider(available []string, configured string) string {
+	cfg := strings.TrimSpace(configured)
+	for _, key := range available {
+		k := strings.TrimSpace(key)
+		if strings.EqualFold(k, cfg) || strings.EqualFold(k, openAICompatProviderPrefix+cfg) {
+			return k
+		}
+	}
+	return ""
 }
 
 func containsFold(list []string, value string) bool {

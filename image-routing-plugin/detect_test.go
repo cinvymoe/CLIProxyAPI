@@ -11,37 +11,37 @@ func TestDetectImage(t *testing.T) {
 	}{
 		{
 			name:         "chat-completions image_url",
-			format:       "chat-completions",
+			format:       "openai",
 			body:         `{"messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}}]}]}`,
 			wantDetected: true,
 		},
 		{
 			name:         "chat-completions plain string content",
-			format:       "chat-completions",
+			format:       "openai",
 			body:         `{"messages":[{"role":"user","content":"hi"}]}`,
 			wantDetected: false,
 		},
 		{
 			name:         "chat-completions text-only blocks",
-			format:       "chat-completions",
+			format:       "openai",
 			body:         `{"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`,
 			wantDetected: false,
 		},
 		{
 			name:         "chat-completions tool result image",
-			format:       "chat-completions",
+			format:       "openai",
 			body:         `{"messages":[{"role":"tool","tool_call_id":"t1","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}}]}]}`,
 			wantDetected: true,
 		},
 		{
 			name:         "responses input_image in content",
-			format:       "responses",
+			format:       "openai-response",
 			body:         `{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"},{"type":"input_image","image_url":"data:image/png;base64,AA=="}]}]}`,
 			wantDetected: true,
 		},
 		{
 			name:         "responses text only",
-			format:       "responses",
+			format:       "openai-response",
 			body:         `{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`,
 			wantDetected: false,
 		},

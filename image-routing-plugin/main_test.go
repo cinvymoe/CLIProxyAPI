@@ -45,10 +45,10 @@ func TestHandleMethod_UnknownMethodReturnsErrorEnvelope(t *testing.T) {
 func TestHandleMethod_ModelRouteReturnsValidEnvelope(t *testing.T) {
 	configStore.Store(routingConfig{Enabled: true, Fallback: "mimo-v2.5", FallbackProvider: "opencode-go", Models: []string{"deepseek-v4-flash"}})
 	req := pluginapi.ModelRouteRequest{
-		SourceFormat:       "chat-completions",
+		SourceFormat:       "openai",
 		RequestedModel:     "deepseek-v4-flash",
 		Body:               []byte(`{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}}]}]}`),
-		AvailableProviders: []string{"opencode-go"},
+		AvailableProviders: []string{"openai-compatible-opencode-go"},
 	}
 	rawRequest, _ := json.Marshal(req)
 	raw, err := handleMethod(pluginabi.MethodModelRoute, rawRequest)
@@ -74,8 +74,8 @@ func TestHandleMethod_ModelRouteReturnsValidEnvelope(t *testing.T) {
 	if err := json.Unmarshal(env.Result, &resp); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if !resp.Handled || resp.TargetKind != "provider" || resp.Target != "opencode-go" || resp.TargetModel != "mimo-v2.5" {
-		t.Fatalf("resp = %+v, want handled provider opencode-go mimo-v2.5", resp)
+	if !resp.Handled || resp.TargetKind != "provider" || resp.Target != "openai-compatible-opencode-go" || resp.TargetModel != "mimo-v2.5" {
+		t.Fatalf("resp = %+v, want handled provider openai-compatible-opencode-go mimo-v2.5", resp)
 	}
 	// Round-trip: the same envelope result must decode into the host's
 	// pluginapi.ModelRouteResponse with all fields populated.
@@ -84,7 +84,7 @@ func TestHandleMethod_ModelRouteReturnsValidEnvelope(t *testing.T) {
 		t.Fatalf("unmarshal into pluginapi.ModelRouteResponse: %v", err)
 	}
 	if !hostResp.Handled || hostResp.TargetKind != pluginapi.ModelRouteTargetProvider ||
-		hostResp.Target != "opencode-go" || hostResp.TargetModel != "mimo-v2.5" {
-		t.Fatalf("hostResp = %+v, want handled provider opencode-go mimo-v2.5", hostResp)
+		hostResp.Target != "openai-compatible-opencode-go" || hostResp.TargetModel != "mimo-v2.5" {
+		t.Fatalf("hostResp = %+v, want handled provider openai-compatible-opencode-go mimo-v2.5", hostResp)
 	}
 }

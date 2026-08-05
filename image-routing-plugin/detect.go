@@ -7,12 +7,14 @@ import (
 )
 
 // detectImage reports whether the client request body contains image content
-// for the given source protocol format.
+// for the given source protocol format. The format is the host's handler
+// HandlerType() string (e.g. "openai" for /v1/chat/completions and
+// "openai-response" for /v1/responses).
 func detectImage(body []byte, sourceFormat string) bool {
 	switch strings.ToLower(strings.TrimSpace(sourceFormat)) {
-	case "chat-completions":
+	case "openai":
 		return detectImageChatCompletions(body)
-	case "responses":
+	case "openai-response":
 		return detectImageResponses(body)
 	case "claude":
 		return detectImageClaude(body)

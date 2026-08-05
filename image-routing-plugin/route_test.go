@@ -30,53 +30,61 @@ func TestDecide_RouteMatrix(t *testing.T) {
 		name string
 		req  pluginapi.ModelRouteRequest
 		want pluginapi.ModelRouteResponse
+		cfg  *routingConfig
 	}{
 		{
 			name: "hit routes to fallback provider and model",
-			req:  routeRequest("deepseek-v4-flash", imageBody(), "chat-completions", []string{"opencode-go"}, false),
-			want: pluginapi.ModelRouteResponse{Handled: true, TargetKind: pluginapi.ModelRouteTargetProvider, Target: "opencode-go", TargetModel: "mimo-v2.5"},
+			req:  routeRequest("deepseek-v4-flash", imageBody(), "openai", []string{"openai-compatible-opencode-go"}, false),
+			want: pluginapi.ModelRouteResponse{Handled: true, TargetKind: pluginapi.ModelRouteTargetProvider, Target: "openai-compatible-opencode-go", TargetModel: "mimo-v2.5"},
 		},
 		{
 			name: "thinking suffix model hits",
-			req:  routeRequest("deepseek-v4-flash(high)", imageBody(), "chat-completions", []string{"opencode-go"}, false),
-			want: pluginapi.ModelRouteResponse{Handled: true, TargetKind: pluginapi.ModelRouteTargetProvider, Target: "opencode-go", TargetModel: "mimo-v2.5"},
+			req:  routeRequest("deepseek-v4-flash(high)", imageBody(), "openai", []string{"openai-compatible-opencode-go"}, false),
+			want: pluginapi.ModelRouteResponse{Handled: true, TargetKind: pluginapi.ModelRouteTargetProvider, Target: "openai-compatible-opencode-go", TargetModel: "mimo-v2.5"},
 		},
 		{
 			name: "case-insensitive model match",
-			req:  routeRequest("DeepSeek-V4-Flash", imageBody(), "chat-completions", []string{"opencode-go"}, false),
-			want: pluginapi.ModelRouteResponse{Handled: true, TargetKind: pluginapi.ModelRouteTargetProvider, Target: "opencode-go", TargetModel: "mimo-v2.5"},
+			req:  routeRequest("DeepSeek-V4-Flash", imageBody(), "openai", []string{"openai-compatible-opencode-go"}, false),
+			want: pluginapi.ModelRouteResponse{Handled: true, TargetKind: pluginapi.ModelRouteTargetProvider, Target: "openai-compatible-opencode-go", TargetModel: "mimo-v2.5"},
 		},
 		{
 			name: "model outside list not handled",
-			req:  routeRequest("glm-5.1", imageBody(), "chat-completions", []string{"opencode-go"}, false),
+			req:  routeRequest("glm-5.1", imageBody(), "openai", []string{"openai-compatible-opencode-go"}, false),
 			want: pluginapi.ModelRouteResponse{Handled: false},
 		},
 		{
 			name: "text-only body not handled",
-			req:  routeRequest("deepseek-v4-flash", textBody(), "chat-completions", []string{"opencode-go"}, false),
+			req:  routeRequest("deepseek-v4-flash", textBody(), "openai", []string{"openai-compatible-opencode-go"}, false),
 			want: pluginapi.ModelRouteResponse{Handled: false},
 		},
 		{
 			name: "fallback provider unavailable not handled",
-			req:  routeRequest("deepseek-v4-flash", imageBody(), "chat-completions", []string{"xfyun-coding"}, false),
+			req:  routeRequest("deepseek-v4-flash", imageBody(), "openai", []string{"openai-compatible-xfyun-coding"}, false),
 			want: pluginapi.ModelRouteResponse{Handled: false},
+		},
+		{
+			name: "non-prefixed provider exact match",
+			req:  routeRequest("deepseek-v4-flash", imageBody(), "openai", []string{"gemini"}, false),
+			want: pluginapi.ModelRouteResponse{Handled: true, TargetKind: pluginapi.ModelRouteTargetProvider, Target: "gemini", TargetModel: "mimo-v2.5"},
+			cfg:  &routingConfig{Enabled: true, Fallback: "mimo-v2.5", FallbackProvider: "gemini", Models: []string{"deepseek-v4-flash"}},
 		},
 		{
 			name: "streaming request hits identically",
-			req:  routeRequest("deepseek-v4-flash", imageBody(), "chat-completions", []string{"opencode-go"}, true),
-			want: pluginapi.ModelRouteResponse{Handled: true, TargetKind: pluginapi.ModelRouteTargetProvider, Target: "opencode-go", TargetModel: "mimo-v2.5"},
+			req:  routeRequest("deepseek-v4-flash", imageBody(), "openai", []string{"openai-compatible-opencode-go"}, true),
+			want: pluginapi.ModelRouteResponse{Handled: true, TargetKind: pluginapi.ModelRouteTargetProvider, Target: "openai-compatible-opencode-go", TargetModel: "mimo-v2.5"},
 		},
 		{
 			name: "disabled config not handled",
-			req:  routeRequest("deepseek-v4-flash", imageBody(), "chat-completions", []string{"opencode-go"}, false),
+			req:  routeRequest("deepseek-v4-flash", imageBody(), "openai", []string{"openai-compatible-opencode-go"}, false),
 			want: pluginapi.ModelRouteResponse{Handled: false},
+			cfg:  &routingConfig{Enabled: false, Fallback: "mimo-v2.5", FallbackProvider: "opencode-go", Models: []string{"deepseek-v4-flash"}},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			testCfg := cfg
-			if tc.name == "disabled config not handled" {
-				testCfg.Enabled = false
+			if tc.cfg != nil {
+				testCfg = *tc.cfg
 			}
 			got := decide(tc.req, testCfg)
 			if got.Handled != tc.want.Handled || got.TargetKind != tc.want.TargetKind || got.Target != tc.want.Target || got.TargetModel != tc.want.TargetModel {
