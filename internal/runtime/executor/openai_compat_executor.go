@@ -131,6 +131,10 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 	if helps.ShouldNormalizeOpenAIToolResultsForModel(e.resolveCompatConfig(auth), baseModel, requestedModel) {
 		translated = helps.NormalizeOpenAIToolResultsTextOnly(translated)
 	}
+	translated, err = normalizeCompatTemperatureForUpstream(translated, baseModel, baseURL)
+	if err != nil {
+		return resp, err
+	}
 	if opts.Alt != "responses/compact" {
 		translated, err = e.applyPromptCacheKey(ctx, auth, from, baseModel, req, opts, translated)
 		if err != nil {
@@ -409,6 +413,10 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 	translated = helps.ApplyPayloadConfigWithRequest(e.cfg, baseModel, to.String(), from.String(), "", translated, originalTranslated, requestedModel, requestPath, opts.Headers)
 	if helps.ShouldNormalizeOpenAIToolResultsForModel(e.resolveCompatConfig(auth), baseModel, requestedModel) {
 		translated = helps.NormalizeOpenAIToolResultsTextOnly(translated)
+	}
+	translated, err = normalizeCompatTemperatureForUpstream(translated, baseModel, baseURL)
+	if err != nil {
+		return nil, err
 	}
 	if opts.Alt != "responses/compact" {
 		translated, err = e.applyPromptCacheKey(ctx, auth, from, baseModel, req, opts, translated)
@@ -1097,6 +1105,26 @@ func (e *OpenAICompatExecutor) resolveCredentials(auth *cliproxyauth.Auth) (base
 		apiKey = strings.TrimSpace(auth.Attributes["api_key"])
 	}
 	return
+}
+
+// normalizeCompatTemperatureForUpstream forces temperature to 1 for Kimi K3
+// models reached through OpenAI-compatible providers. The Kimi coding API only
+// accepts temperature=1 for the K3 family ("invalid temperature: only 1 is
+// allowed for this model"), while OpenAI-format clients commonly send other
+// values such as 0.7. The upstream model name (resolved model or request body)
+// and the provider base URL are both checked so only Kimi K3 requests change.
+func normalizeCompatTemperatureForUpstream(body []byte, upstreamModel, baseURL string) ([]byte, error) {
+	if !strings.Contains(strings.ToLower(baseURL), "kimi.com") {
+		return body, nil
+	}
+	if !isKimiK3UpstreamModel(upstreamModel) && !isKimiK3UpstreamModel(gjson.GetBytes(body, "model").String()) {
+		return body, nil
+	}
+	out, err := sjson.SetBytes(body, "temperature", 1)
+	if err != nil {
+		return body, fmt.Errorf("openai compat executor: failed to force temperature for k3: %w", err)
+	}
+	return out, nil
 }
 
 func (e *OpenAICompatExecutor) resolveCompatConfig(auth *cliproxyauth.Auth) *config.OpenAICompatibility {

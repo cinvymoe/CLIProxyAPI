@@ -144,6 +144,10 @@ func (e *KimiExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 	if err != nil {
 		return resp, err
 	}
+	body, err = normalizeKimiTemperatureForUpstream(body, upstreamModel)
+	if err != nil {
+		return resp, err
+	}
 	reporter.SetTranslatedReasoningEffort(body, e.Identifier())
 
 	url := kimiauth.KimiAPIBaseURL + "/v1/chat/completions"
@@ -262,6 +266,10 @@ func (e *KimiExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Aut
 	requestPath := helps.PayloadRequestPath(opts)
 	body = helps.ApplyPayloadConfigWithRequest(e.cfg, baseModel, to.String(), from.String(), "", body, originalTranslated, requestedModel, requestPath, opts.Headers)
 	body, err = normalizeKimiToolMessageLinks(body)
+	if err != nil {
+		return nil, err
+	}
+	body, err = normalizeKimiTemperatureForUpstream(body, upstreamModel)
 	if err != nil {
 		return nil, err
 	}
@@ -844,4 +852,29 @@ func normalizeKimiUpstreamModel(model string) string {
 		return normalized + "(" + parsed.RawSuffix + ")"
 	}
 	return normalized
+}
+
+// normalizeKimiTemperatureForUpstream forces temperature to 1 for the Kimi K3
+// model family, whose upstream API only accepts temperature=1. OpenAI-format
+// clients may send any temperature value (e.g. 0.7), which upstream rejects
+// with "invalid temperature: only 1 is allowed for this model".
+func normalizeKimiTemperatureForUpstream(body []byte, upstreamModel string) ([]byte, error) {
+	if !isKimiK3UpstreamModel(upstreamModel) {
+		return body, nil
+	}
+	out, err := sjson.SetBytes(body, "temperature", 1)
+	if err != nil {
+		return body, fmt.Errorf("kimi executor: failed to force temperature for k3: %w", err)
+	}
+	return out, nil
+}
+
+// isKimiK3UpstreamModel reports whether the normalized upstream model belongs
+// to the Kimi K3 family. A trailing thinking suffix such as "(1024)" is ignored.
+func isKimiK3UpstreamModel(upstreamModel string) bool {
+	base := strings.TrimSpace(upstreamModel)
+	if idx := strings.IndexByte(base, '('); idx >= 0 {
+		base = base[:idx]
+	}
+	return strings.HasPrefix(strings.ToLower(base), "k3")
 }

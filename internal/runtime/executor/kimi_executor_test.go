@@ -705,3 +705,81 @@ func TestNormalizeKimiUpstreamModel(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeKimiTemperatureForUpstream_ForcesOneForK3(t *testing.T) {
+	body := []byte(`{"model":"k3","temperature":0.7,"messages":[{"role":"user","content":"hello"}]}`)
+
+	out, err := normalizeKimiTemperatureForUpstream(body, "k3")
+	if err != nil {
+		t.Fatalf("normalizeKimiTemperatureForUpstream() error = %v", err)
+	}
+	if got := gjson.GetBytes(out, "temperature").Float(); got != 1 {
+		t.Fatalf("temperature = %v, want 1", got)
+	}
+}
+
+func TestNormalizeKimiTemperatureForUpstream_HandlesSuffixedK3(t *testing.T) {
+	body := []byte(`{"model":"k3(1024)","temperature":0.2,"messages":[{"role":"user","content":"hello"}]}`)
+
+	out, err := normalizeKimiTemperatureForUpstream(body, "k3(1024)")
+	if err != nil {
+		t.Fatalf("normalizeKimiTemperatureForUpstream() error = %v", err)
+	}
+	if got := gjson.GetBytes(out, "temperature").Float(); got != 1 {
+		t.Fatalf("temperature = %v, want 1", got)
+	}
+}
+
+func TestNormalizeKimiTemperatureForUpstream_PreservesNonK3(t *testing.T) {
+	body := []byte(`{"model":"k2.6","temperature":0.7,"messages":[{"role":"user","content":"hello"}]}`)
+
+	out, err := normalizeKimiTemperatureForUpstream(body, "k2.6")
+	if err != nil {
+		t.Fatalf("normalizeKimiTemperatureForUpstream() error = %v", err)
+	}
+	if got := gjson.GetBytes(out, "temperature").Float(); got != 0.7 {
+		t.Fatalf("temperature = %v, want 0.7", got)
+	}
+}
+
+func TestKimiExecutorExecute_ForcesTemperatureOneForK3(t *testing.T) {
+	var upstreamBody []byte
+	ctx := context.WithValue(context.Background(), "cliproxy.roundtripper", kimiRoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		var errRead error
+		upstreamBody, errRead = io.ReadAll(req.Body)
+		if errRead != nil {
+			return nil, errRead
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(
+				`{"id":"chatcmpl-1","object":"chat.completion","created":0,"model":"k3","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
+			)),
+		}, nil
+	}))
+
+	executor := NewKimiExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{
+		Attributes: map[string]string{},
+		Metadata:   map[string]any{"access_token": "test-token"},
+	}
+	const model = "kimi-k3"
+	payload := []byte(`{"model":"kimi-k3","temperature":0.2,"messages":[{"role":"user","content":"hello"}]}`)
+	_, err := executor.Execute(ctx, auth, cliproxyexecutor.Request{
+		Model:   model,
+		Payload: payload,
+	}, cliproxyexecutor.Options{
+		SourceFormat:    sdktranslator.FormatOpenAI,
+		OriginalRequest: payload,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got := gjson.GetBytes(upstreamBody, "model").String(); got != "k3" {
+		t.Fatalf("upstream model = %q, want k3", got)
+	}
+	if got := gjson.GetBytes(upstreamBody, "temperature").Float(); got != 1 {
+		t.Fatalf("upstream temperature = %v, want 1", got)
+	}
+}
