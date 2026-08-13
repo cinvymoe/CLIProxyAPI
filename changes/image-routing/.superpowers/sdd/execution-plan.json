@@ -1,0 +1,127 @@
+{
+  "mode": "sdd",
+  "source": "user-confirmed-revision",
+  "rationale": "revision 3: tasks.md 增加完成标记(关闭 guard 要求 checkbox 格式),review 证据不变,receipt 按同一 base/head/report 机械重录",
+  "waves": [
+    {
+      "id": "w1-skeleton-detect",
+      "strategy": "parallel",
+      "tasks": [
+        "T1",
+        "T2"
+      ],
+      "depends_on": []
+    },
+    {
+      "id": "w2-decision",
+      "strategy": "serial",
+      "tasks": [
+        "T3"
+      ],
+      "depends_on": [
+        "w1-skeleton-detect"
+      ]
+    },
+    {
+      "id": "w3-build-e2e",
+      "strategy": "serial",
+      "tasks": [
+        "T4"
+      ],
+      "depends_on": [
+        "w2-decision"
+      ]
+    }
+  ],
+  "artifacts_hash": "sha256:b39b40642df75eadd1d7c92220f376283dd6a6d734b5a15df2be1609da58b744",
+  "contract_hash": "sha256:6541e2a70107989d0e16f54a854a535774e7335ef8481db72a01eea9c5d14336",
+  "workflow": "full",
+  "revision": 3,
+  "recommendation": {
+    "available_modes": [
+      "inline",
+      "batch-inline",
+      "sdd"
+    ],
+    "recommendation": {
+      "mode": "sdd",
+      "reasons": [
+        "The declared execution waves include parallel work, which SDD can dispatch and review independently."
+      ]
+    },
+    "facts": {
+      "workflow": "full",
+      "documented_task_count": 4,
+      "planned_task_count": 4,
+      "planned_wave_count": 3,
+      "has_parallel_wave": true,
+      "inline_threshold": 3
+    }
+  },
+  "recommendation_receipt": {
+    "recommendation": {
+      "available_modes": [
+        "inline",
+        "batch-inline",
+        "sdd"
+      ],
+      "recommendation": {
+        "mode": "sdd",
+        "reasons": [
+          "The declared execution waves include parallel work, which SDD can dispatch and review independently."
+        ]
+      },
+      "facts": {
+        "workflow": "full",
+        "documented_task_count": 4,
+        "planned_task_count": 4,
+        "planned_wave_count": 3,
+        "has_parallel_wave": true,
+        "inline_threshold": 3
+      }
+    },
+    "waves": [
+      {
+        "id": "w1-skeleton-detect",
+        "strategy": "parallel",
+        "tasks": [
+          "T1",
+          "T2"
+        ],
+        "depends_on": []
+      },
+      {
+        "id": "w2-decision",
+        "strategy": "serial",
+        "tasks": [
+          "T3"
+        ],
+        "depends_on": [
+          "w1-skeleton-detect"
+        ]
+      },
+      {
+        "id": "w3-build-e2e",
+        "strategy": "serial",
+        "tasks": [
+          "T4"
+        ],
+        "depends_on": [
+          "w2-decision"
+        ]
+      }
+    ],
+    "artifacts_hash": "sha256:b39b40642df75eadd1d7c92220f376283dd6a6d734b5a15df2be1609da58b744",
+    "contract_hash": "sha256:6541e2a70107989d0e16f54a854a535774e7335ef8481db72a01eea9c5d14336",
+    "workflow": "full",
+    "execution_plan_revision_at_recommendation": 2,
+    "created_at": "2026-08-05T10:12:00.388Z",
+    "hash": "sha256:f5aa7b0f446a0b9761918f63cd5b859d553aac684303be646ced1a66f08bea25"
+  },
+  "selection": {
+    "confirmed": true,
+    "followed_recommendation": true,
+    "acknowledged_non_recommendation": false
+  },
+  "hash": "sha256:618bd4454983415e178e440b915f0974ea1ece440b84df7c87c03b3fffa0d2e7"
+}

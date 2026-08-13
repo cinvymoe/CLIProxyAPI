@@ -1,0 +1,10 @@
+{
+  "status": "pass",
+  "base": "ec1f687843fca48825763dd15fd3fbe52c9366a0",
+  "head": "a47a41d7d0afb530822fb445b227f29ad9cf09ef",
+  "report": ".superpowers/sdd/reviews/w1-skeleton-detect.md",
+  "report_sha256": "sha256:140b061414f9aedb26d2158d4b5767b2ea9d106f26613b11d0d604d8a3fdfbae",
+  "plan_hash": "sha256:4a47fefb02e2872b79490dc9145b2494b6405295fe979e85a1adb7c91c6d768f",
+  "plan_revision": 1,
+  "recorded_at": "2026-08-05T09:13:17.797Z"
+}

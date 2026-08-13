@@ -1,0 +1,46 @@
+# .spec-superflow.yaml — lightweight state machine
+# Derived data. Always rebuildable from artifacts. Lost/corrupt → fall back to content-level detection.
+
+# === Core state ===
+state: closing
+workflow: full
+revision: 3
+
+# === Hashes (fast staleness detection) ===
+artifacts_hash: sha256:b39b40642df75eadd1d7c92220f376283dd6a6d734b5a15df2be1609da58b744
+contract_hash: sha256:6541e2a70107989d0e16f54a854a535774e7335ef8481db72a01eea9c5d14336
+
+# === Execution progress ===
+execution_mode: sdd
+execution_plan_hash: sha256:618bd4454983415e178e440b915f0974ea1ece440b84df7c87c03b3fffa0d2e7
+execution_plan_revision: 3
+batches_completed: 3
+test_result: pass
+spec_merged: true
+spec_publication_receipt: eyJ2ZXJzaW9uIjoxLCJzb3VyY2VfaGFzaCI6InNoYTI1NjoxZjBjYzllOTliYWM1MmY5MjY1YjU4OTk1N2Y4N2FiNWYxMjM4MTRjMzExMmJlODI5ODMzY2I5MjRkYWY4ZGYzIiwiYmFzZWxpbmVfYmVmb3JlX2hhc2giOiJzaGEyNTY6ZWY5NTk2M2I3YTc2NGViMWMzMzg0NmRjMDNlMzhiMTdkNDE5NzJhNDU3OTE5OWY2M2RlMmVmOWQ4YjI1MjhjOSIsImJhc2VsaW5lX2FmdGVyX2hhc2giOiJzaGEyNTY6M2I0MzU0NDhiY2U3YTY1ZGMwMjE1MWViOGU5NTI1ZjQ1NjgxYzI0NThlNTM4ZTNmZmEzMDAzZDBhNjZiZTI1NCIsImNhcGFiaWxpdGllcyI6WyJpbWFnZS1yb3V0aW5nIl19
+
+# === Metadata ===
+change_name: image-routing
+last_transition: 2026-08-05T10:12:33.429Z
+last_transition_from: executing
+last_transition_to: closing
+
+# === Decision points ===
+dp_0_decisions: 变更: changes/image-routing。意图: 当 /v1/chat/completions 与 /v1/responses 请求的消息内容包含 image_url/input_image 图片块时,若请求模型在 image-routing.models 列表中(视为不支持图片的模型),将该请求改路到 image-routing.fallback 配置的模型(如 mimo-v2.5)。约束: 优先调研插件形式,尽量不影响主线代码; 配置形如 image-routing: {fallback: mimo-v2.5, models: [deepseek-v4-flash]}; 不在列表中的模型不做改路。优化: 保持聚焦,不做无关改动。artifact_language=zh。workflow_path=full (与推荐一致: 行为约束变更+可能新增插件模块+跨模块+不确定性高)。沟通方式: 起草后评审。
+dp_0_result: confirmed
+dp_0_confirmed: true
+dp_0_timestamp: 2026-08-05T08:26:21Z
+dp_1_result: confirmed: 以插件形式(ModelRouter 能力)实现 image-routing —— 请求含图片内容且模型在配置列表中时,改路到 fallback-provider 通道的 fallback 模型;零主线代码改动
+dp_1_timestamp: 2026-08-05T08:29:20Z
+dp_2_result: approved: 四份规划产物(proposal/spec/design/tasks)经盲读评审修复后批准,进入契约构建
+dp_2_timestamp: 2026-08-05T08:45:08Z
+dp_3_result: approved: 执行契约批准(Intent Lock/8 项已批准行为/3 wave/测试义务/审查门槛),执行模式 sdd
+dp_3_timestamp: 2026-08-05T08:50:48Z
+dp_4_result: sdd: plan revision 3; user-confirmed-revision; revision 3: tasks.md 增加完成标记(关闭 guard 要求 checkbox 格式),review 证据不变,receipt 按同一 base/head/report 机械重录
+dp_4_timestamp: 2026-08-05T10:12:00.462Z
+dp_5_result: null
+dp_5_timestamp: null
+dp_6_result: pass: 全部 3 个 wave 均有 pass review receipt;最终整体评审 PASS;go test -count=1 10/10 通过,gofmt/vet 干净,主线零改动;e2e 验证改路生效(上游 body 模型 mimo-v2.5,opencode-go 上游对图片内容 400 属预期上游行为)
+dp_6_timestamp: 2026-08-05T10:09:16Z
+dp_7_result: confirmed: image-routing 变更归档 —— 插件 image-routing-plugin 交付(ModelRouter 能力,零主线改动);3 wave 全部 pass;最终评审 PASS;delta spec 已发布到 specs/image-routing/spec.md;decision-point-audit.md 已生成
+dp_7_timestamp: 2026-08-05T10:09:32Z

@@ -1,0 +1,10 @@
+{
+  "status": "pass",
+  "base": "a47a41d7d0afb530822fb445b227f29ad9cf09ef",
+  "head": "c4e8a1abf3ebc0b5b341e25cebc4c0b5ca42cb1c",
+  "report": ".superpowers/sdd/reviews/w1-repair-re-review.md",
+  "report_sha256": "sha256:3cccb42f4f312dd82ee725392e9f0958174474725033f8aabce194fde78d819f",
+  "plan_hash": "sha256:618bd4454983415e178e440b915f0974ea1ece440b84df7c87c03b3fffa0d2e7",
+  "plan_revision": 3,
+  "recorded_at": "2026-08-05T10:12:11.966Z"
+}

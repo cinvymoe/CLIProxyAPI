@@ -1,0 +1,10 @@
+{
+  "status": "pass",
+  "base": "3de28b94d92b50f32e37c0aca615f9ce487dfa6e",
+  "head": "c4e8a1abf3ebc0b5b341e25cebc4c0b5ca42cb1c",
+  "report": ".superpowers/sdd/reviews/w3-build-e2e.md",
+  "report_sha256": "sha256:3af971842950ac7e36ef9841c1f9f980e2e53e6352eaca3eaae3315516e0a796",
+  "plan_hash": "sha256:252680dff20a802b4ee5ff6282a23df926c869f78ef703e1f0b3fec9c70e9910",
+  "plan_revision": 2,
+  "recorded_at": "2026-08-05T10:01:28.656Z"
+}

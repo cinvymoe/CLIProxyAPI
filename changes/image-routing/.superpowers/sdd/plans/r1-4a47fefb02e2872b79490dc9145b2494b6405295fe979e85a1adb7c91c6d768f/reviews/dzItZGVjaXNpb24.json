@@ -1,0 +1,10 @@
+{
+  "status": "pass",
+  "base": "a47a41d7d0afb530822fb445b227f29ad9cf09ef",
+  "head": "3de28b94d92b50f32e37c0aca615f9ce487dfa6e",
+  "report": ".superpowers/sdd/reviews/w2-decision.md",
+  "report_sha256": "sha256:ccbe67adbe56bdce2c68483c8e1eb01aa76c66f300070c83f5d948d70492c637",
+  "plan_hash": "sha256:4a47fefb02e2872b79490dc9145b2494b6405295fe979e85a1adb7c91c6d768f",
+  "plan_revision": 1,
+  "recorded_at": "2026-08-05T09:20:30.940Z"
+}
