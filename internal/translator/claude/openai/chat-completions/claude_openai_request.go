@@ -216,24 +216,20 @@ func convertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream,
 				}
 			case "user", "assistant":
 				contentBlocks := make([][]byte, 0, 4)
-				if preserveEmptyThinkingBlocks && role == "assistant" {
-					if reasoningContent := message.Get("reasoning_content"); reasoningContent.Type == gjson.String && strings.TrimSpace(reasoningContent.String()) != "" {
-						part := []byte(`{"type":"thinking","thinking":"","signature":""}`)
-						part, _ = sjson.SetBytes(part, "thinking", reasoningContent.String())
-						contentBlocks = append(contentBlocks, part)
-					}
-				}
-
 				hasThinkingBlock := false
-
+				toolCalls := message.Get("tool_calls")
+				hasToolCalls := role == "assistant" && toolCalls.Exists() && toolCalls.IsArray()
 				if role == "assistant" {
-					if rc := message.Get("reasoning_content"); rc.Exists() && strings.TrimSpace(rc.String()) != "" {
-						if !preserveEmptyThinkingBlocks {
-							thinkingPart := []byte(`{"type":"thinking","thinking":""}`)
-							thinkingPart, _ = sjson.SetBytes(thinkingPart, "thinking", rc.String())
-							contentBlocks = append(contentBlocks, thinkingPart)
+					if reasoningContent := message.Get("reasoning_content"); reasoningContent.Type == gjson.String && strings.TrimSpace(reasoningContent.String()) != "" {
+						// Preserve reasoning content in compat mode, or in default
+						// mode for tool-call messages where Claude requires a
+						// thinking block preceding the tool calls.
+						if preserveEmptyThinkingBlocks || hasToolCalls {
+							part := []byte(`{"type":"thinking","thinking":"","signature":""}`)
+							part, _ = sjson.SetBytes(part, "thinking", reasoningContent.String())
+							contentBlocks = append(contentBlocks, part)
+							hasThinkingBlock = true
 						}
-						hasThinkingBlock = true
 					}
 				}
 
@@ -253,7 +249,7 @@ func convertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream,
 				}
 
 				// Handle tool calls (for assistant messages)
-				if toolCalls := message.Get("tool_calls"); toolCalls.Exists() && toolCalls.IsArray() && role == "assistant" {
+				if hasToolCalls {
 					if thinkingEnabled && !hasThinkingBlock {
 						contentBlocks = append(contentBlocks, []byte(`{"type":"thinking","thinking":""}`))
 					}
