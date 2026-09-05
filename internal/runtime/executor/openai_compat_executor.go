@@ -241,7 +241,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 					reporter.Publish(ctx, helps.ParseOpenAIUsage(body))
 					reporter.EnsurePublished(ctx)
 					var param any
-					out := sdktranslator.TranslateNonStream(ctx, to, from, req.Model, opts.OriginalRequest, translated, body, &param)
+					out := sdktranslator.TranslateNonStream(ctx, to, responseFormat, req.Model, opts.OriginalRequest, translated, body, &param)
 					resp = cliproxyexecutor.Response{Payload: out, Headers: httpRespRetry.Header.Clone()}
 					return resp, nil
 				}
@@ -264,7 +264,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 			err = xunfeiStatusErr(cls, string(b))
 			return resp, err
 		}
-		err = statusErr{code: httpResp.StatusCode, msg: string(b)}
+		err = newOpenAICompatStatusError(httpResp.StatusCode, httpResp.Header, b)
 		return resp, err
 	}
 	body, err := io.ReadAll(httpResp.Body)
@@ -368,7 +368,7 @@ func (e *OpenAICompatExecutor) executeImages(ctx context.Context, auth *cliproxy
 
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), body))
-		err = statusErr{code: httpResp.StatusCode, msg: string(body)}
+		err = newOpenAICompatStatusError(httpResp.StatusCode, httpResp.Header, body)
 		return resp, err
 	}
 
@@ -538,7 +538,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 			err = xunfeiStatusErr(cls, string(b))
 			return nil, err
 		}
-		err = statusErr{code: httpResp.StatusCode, msg: string(b)}
+		err = newOpenAICompatStatusError(httpResp.StatusCode, httpResp.Header, b)
 		return nil, err
 	}
 streamSuccess:
@@ -1457,4 +1457,46 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 
 func isXunfeiRetryableError(body []byte) bool {
 	return classifyXunfeiError(body) == xunfeiErrRetryable
+}
+
+const openAICompatTPMFallbackRetryAfter = time.Minute
+
+func newOpenAICompatStatusError(status int, headers http.Header, body []byte) statusErr {
+	return statusErr{
+		code:       status,
+		msg:        string(body),
+		retryAfter: openAICompatRetryAfter(status, headers, body, time.Now()),
+	}
+}
+
+// openAICompatRetryAfter preserves the provider's standard Retry-After signal.
+// Some OpenAI-compatible providers omit that header for explicit per-minute
+// token limits; in that narrow case a one-minute fallback prevents immediate
+// replay of the same large request while keeping the retry wait bounded.
+func openAICompatRetryAfter(status int, headers http.Header, body []byte, now time.Time) *time.Duration {
+	if status != http.StatusTooManyRequests {
+		return nil
+	}
+	if raw := strings.TrimSpace(headers.Get("Retry-After")); raw != "" {
+		if seconds, errParse := strconv.ParseInt(raw, 10, 64); errParse == nil && seconds >= 0 {
+			delay := time.Duration(seconds) * time.Second
+			return &delay
+		}
+		if deadline, errParse := http.ParseTime(raw); errParse == nil {
+			delay := deadline.Sub(now)
+			if delay < 0 {
+				delay = 0
+			}
+			return &delay
+		}
+	}
+
+	code := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "error.code").String()))
+	message := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "error.message").String()))
+	if strings.Contains(code, "tpmratelimitexceeded") ||
+		(strings.Contains(message, "tokens per minute") && strings.Contains(message, "limit") && strings.Contains(message, "exceeded")) {
+		delay := openAICompatTPMFallbackRetryAfter
+		return &delay
+	}
+	return nil
 }
