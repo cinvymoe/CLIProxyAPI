@@ -20,10 +20,11 @@ const (
 // pluginConfig is the plugin-owned configuration parsed from the host-provided
 // config_yaml (plugins.configs.opencode-responses in config.yaml).
 type pluginConfig struct {
-	Enabled bool     `yaml:"enabled"`
-	BaseURL string   `yaml:"base-url"`
-	APIKey  string   `yaml:"api-key"`
-	Models  []string `yaml:"models"`
+	Enabled  bool              `yaml:"enabled" json:"enabled"`
+	BaseURL  string            `yaml:"base-url" json:"base-url"`
+	APIKey   string            `yaml:"api-key" json:"api-key"`
+	Models   []string          `yaml:"models" json:"models"`
+	ModelMap map[string]string `yaml:"model-map" json:"model-map"`
 }
 
 // configStore holds the latest parsed config; model.route and executor calls
@@ -65,7 +66,7 @@ func applyConfig(request []byte) {
 		if err := json.Unmarshal(request, &lr); err == nil && len(lr.ConfigYAML) > 0 {
 			cfg := parsePluginConfig(lr.ConfigYAML)
 			configStore.Store(cfg)
-			log.Infof("opencode-responses: config applied (enabled=%v base-url=%q models=%v)", cfg.Enabled, cfg.BaseURL, cfg.Models)
+			log.Infof("opencode-responses: config applied (enabled=%v base-url=%q models=%v model-map=%v)", cfg.Enabled, cfg.BaseURL, cfg.Models, cfg.ModelMap)
 			return
 		}
 	}
@@ -87,5 +88,41 @@ func parsePluginConfig(raw []byte) pluginConfig {
 		cfg.BaseURL = defaultBaseURL
 	}
 	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
+	cfg.ModelMap = normalizeModelMap(cfg.ModelMap)
 	return cfg
+}
+
+// normalizeModelMap trims keys/values, skips empty or equal case-insensitively,
+// and deduplicates keys case-insensitively (keeps first occurrence).
+func normalizeModelMap(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		if k == "" || v == "" {
+			continue
+		}
+		if strings.EqualFold(k, v) {
+			continue
+		}
+		// Deduplicate case-insensitively.
+		duplicate := false
+		for ek := range out {
+			if strings.EqualFold(ek, k) {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+		out[k] = v
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

@@ -163,6 +163,10 @@ func chatToResponses(payload []byte, modelFallback string, stream bool) []byte {
 	}
 	// Strip thinking suffix (e.g. "model(high)") from the upstream model name.
 	model, suffixEffort := stripThinkingSuffix(model)
+	// Transparent model rewrite via model-map (alias -> upstream).
+	if mapped := lookupMappedModel(model, currentConfig().ModelMap); mapped != "" {
+		model = mapped
+	}
 	// Start from empty object and copy relevant fields.
 	out := []byte(`{}`)
 	out, _ = sjson.SetBytes(out, "model", model)
@@ -438,6 +442,8 @@ func stripThinkingSuffix(model string) (base, effort string) {
 
 // normalizeUpstreamModel strips any thinking suffix from a Responses payload's
 // model field and maps it to reasoning.effort when reasoning is not already set.
+// It also applies the transparent model-map rewrite (alias -> upstream) after
+// stripping the suffix.
 func normalizeUpstreamModel(payload []byte) []byte {
 	if len(payload) == 0 || !gjson.ValidBytes(payload) {
 		return payload
@@ -447,10 +453,104 @@ func normalizeUpstreamModel(payload []byte) []byte {
 		return payload
 	}
 	base, effort := stripThinkingSuffix(model)
+	// Apply model-map rewrite on the stripped base.
+	if mapped := lookupMappedModel(base, currentConfig().ModelMap); mapped != "" {
+		base = mapped
+	}
 	if base == model {
 		return payload
 	}
 	out, errSet := sjson.SetBytes(payload, "model", base)
+	if errSet != nil {
+		return payload
+	}
+	if effort != "" && !gjson.GetBytes(payload, "reasoning").Exists() {
+		if out2, errReason := sjson.SetBytes(out, "reasoning.effort", effort); errReason == nil {
+			out = out2
+		}
+	}
+	return out
+}
+
+// lookupMappedModel returns the mapped upstream model for alias via modelMap,
+// or empty if no mapping. It expects alias to be already trimmed and suffix-
+// stripped, but also handles stripping for safety and performs case-insensitive
+// matching on trimmed keys.
+func lookupMappedModel(alias string, modelMap map[string]string) string {
+	if len(modelMap) == 0 {
+		return ""
+	}
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		return ""
+	}
+	// Strip thinking suffix before lookup so "model(high)" matches "model".
+	base, _ := stripThinkingSuffix(alias)
+	base = strings.TrimSpace(base)
+	if base == "" {
+		base = alias
+	}
+	for k, v := range modelMap {
+		if strings.EqualFold(strings.TrimSpace(k), base) {
+			mapped := strings.TrimSpace(v)
+			if mapped == "" || strings.EqualFold(mapped, base) {
+				return ""
+			}
+			return mapped
+		}
+	}
+	return ""
+}
+
+// effectiveResponseModel maps an upstream model back to the requested alias
+// when the alias transparently maps to that upstream via ModelMap. It keeps
+// the upgrade transparent: downstream sees the alias it requested.
+func effectiveResponseModel(upstreamModel, requestedAlias string) string {
+	upstreamModel = strings.TrimSpace(upstreamModel)
+	requestedAlias = strings.TrimSpace(requestedAlias)
+	if upstreamModel == "" || requestedAlias == "" {
+		return upstreamModel
+	}
+	baseAlias, _ := stripThinkingSuffix(requestedAlias)
+	baseAlias = strings.TrimSpace(baseAlias)
+	if baseAlias == "" {
+		baseAlias = requestedAlias
+	}
+	if mapped := lookupMappedModel(baseAlias, currentConfig().ModelMap); mapped != "" && strings.EqualFold(mapped, upstreamModel) {
+		return baseAlias
+	}
+	return upstreamModel
+}
+
+// rewritePayloadModel applies the model-map rewrite directly to a payload's
+// model field. It strips any thinking suffix before lookup and re-applies the
+// suffix-derived reasoning.effort handling. It is idempotent.
+func rewritePayloadModel(payload []byte) []byte {
+	if len(payload) == 0 || !gjson.ValidBytes(payload) {
+		return payload
+	}
+	cfg := currentConfig()
+	if len(cfg.ModelMap) == 0 {
+		return payload
+	}
+	rawModel := strings.TrimSpace(gjson.GetBytes(payload, "model").String())
+	if rawModel == "" {
+		return payload
+	}
+	base, effort := stripThinkingSuffix(rawModel)
+	mapped := lookupMappedModel(base, cfg.ModelMap)
+	newModel := base
+	if mapped != "" {
+		newModel = mapped
+	}
+	if newModel == rawModel {
+		return payload
+	}
+	// Only rewrite if model actually changes (due to mapping or suffix).
+	if newModel == base && base == rawModel {
+		return payload
+	}
+	out, errSet := sjson.SetBytes(payload, "model", newModel)
 	if errSet != nil {
 		return payload
 	}
@@ -533,7 +633,20 @@ func responsesToChatNonStream(respBody []byte, modelFallback string) []byte {
 	}
 	model := strings.TrimSpace(root.Get("model").String())
 	if model == "" {
-		model = strings.TrimSpace(modelFallback)
+		alias := strings.TrimSpace(modelFallback)
+		if alias != "" {
+			base, _ := stripThinkingSuffix(alias)
+			base = strings.TrimSpace(base)
+			if base != "" {
+				alias = base
+			}
+		}
+		model = alias
+	} else if strings.TrimSpace(modelFallback) != "" {
+		// Transparent alias: rewrite upstream model back to requested alias if mapped.
+		if rewritten := effectiveResponseModel(model, modelFallback); rewritten != model {
+			model = rewritten
+		}
 	}
 	// Aggregate text from output messages and collect function calls.
 	var textBuilder strings.Builder
@@ -727,10 +840,8 @@ func buildChatDeltaChunk(state *chatStreamState, delta string) []byte {
 	if created == 0 {
 		created = time.Now().Unix()
 	}
-	model := state.model
-	if model == "" {
-		model = "muse-spark-1.2-contributor"
-	}
+	// Use the requested alias preserved in state.model; avoid hardcoding model names.
+	model := strings.TrimSpace(state.model)
 	chunk := []byte(`{"id":"","object":"chat.completion.chunk","created":0,"model":"","choices":[{"index":0,"delta":{"content":""},"finish_reason":null}]}`)
 	chunk, _ = sjson.SetBytes(chunk, "id", id)
 	chunk, _ = sjson.SetBytes(chunk, "created", created)
@@ -748,10 +859,8 @@ func buildChatRoleChunk(state *chatStreamState) []byte {
 	if created == 0 {
 		created = time.Now().Unix()
 	}
-	model := state.model
-	if model == "" {
-		model = "muse-spark-1.2-contributor"
-	}
+	// Use the requested alias preserved in state.model; avoid hardcoding model names.
+	model := strings.TrimSpace(state.model)
 	chunk := []byte(`{"id":"","object":"chat.completion.chunk","created":0,"model":"","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`)
 	chunk, _ = sjson.SetBytes(chunk, "id", id)
 	chunk, _ = sjson.SetBytes(chunk, "created", created)
@@ -771,10 +880,8 @@ func buildChatToolCallChunk(state *chatStreamState, index int, id, name, argsDel
 	if created == 0 {
 		created = time.Now().Unix()
 	}
-	model := state.model
-	if model == "" {
-		model = "muse-spark-1.2-contributor"
-	}
+	// Use the requested alias preserved in state.model; avoid hardcoding model names.
+	model := strings.TrimSpace(state.model)
 	fn := map[string]interface{}{}
 	if name != "" {
 		fn["name"] = name
@@ -816,10 +923,8 @@ func buildChatFinishChunk(state *chatStreamState, finishReason string) []byte {
 	if created == 0 {
 		created = time.Now().Unix()
 	}
-	model := state.model
-	if model == "" {
-		model = "muse-spark-1.2-contributor"
-	}
+	// Use the requested alias preserved in state.model; avoid hardcoding model names.
+	model := strings.TrimSpace(state.model)
 	if finishReason == "" {
 		finishReason = "stop"
 	}
@@ -844,8 +949,13 @@ func translateResponsesStreamToChat(payload []byte, state *chatStreamState, mode
 			if delta != "" {
 				if state.responseID == "" {
 					state.responseID = "chatcmpl-" + fmt.Sprintf("%d", time.Now().UnixNano())
-					if modelFallback != "" {
-						state.model = modelFallback
+					if modelFallback != "" && strings.TrimSpace(state.model) == "" {
+						base, _ := stripThinkingSuffix(strings.TrimSpace(modelFallback))
+						base = strings.TrimSpace(base)
+						if base == "" {
+							base = strings.TrimSpace(modelFallback)
+						}
+						state.model = base
 					}
 				}
 				var out [][]byte
@@ -870,10 +980,19 @@ func translateResponsesStreamToChat(payload []byte, state *chatStreamState, mode
 			if v := gjson.GetBytes(payload, "response.created_at"); v.Exists() && v.Int() != 0 {
 				state.created = v.Int()
 			}
-			if v := gjson.GetBytes(payload, "response.model"); v.Exists() && v.String() != "" {
-				state.model = v.String()
-			} else if modelFallback != "" && state.model == "" {
-				state.model = modelFallback
+			if v := gjson.GetBytes(payload, "response.model"); v.Exists() && strings.TrimSpace(v.String()) != "" {
+				upstream := strings.TrimSpace(v.String())
+				if modelFallback != "" {
+					upstream = effectiveResponseModel(upstream, modelFallback)
+				}
+				state.model = upstream
+			} else if modelFallback != "" && strings.TrimSpace(state.model) == "" {
+				base, _ := stripThinkingSuffix(strings.TrimSpace(modelFallback))
+				base = strings.TrimSpace(base)
+				if base == "" {
+					base = strings.TrimSpace(modelFallback)
+				}
+				state.model = base
 			}
 			return nil
 		}
@@ -919,10 +1038,19 @@ func translateResponsesStreamToChat(payload []byte, state *chatStreamState, mode
 				if v := gjson.Get(data, "response.created_at"); v.Exists() && v.Int() != 0 {
 					state.created = v.Int()
 				}
-				if v := gjson.Get(data, "response.model"); v.Exists() && v.String() != "" {
-					state.model = v.String()
-				} else if modelFallback != "" && state.model == "" {
-					state.model = modelFallback
+				if v := gjson.Get(data, "response.model"); v.Exists() && strings.TrimSpace(v.String()) != "" {
+					upstream := strings.TrimSpace(v.String())
+					if modelFallback != "" {
+						upstream = effectiveResponseModel(upstream, modelFallback)
+					}
+					state.model = upstream
+				} else if modelFallback != "" && strings.TrimSpace(state.model) == "" {
+					base, _ := stripThinkingSuffix(strings.TrimSpace(modelFallback))
+					base = strings.TrimSpace(base)
+					if base == "" {
+						base = strings.TrimSpace(modelFallback)
+					}
+					state.model = base
 				}
 			case "response.output_text.delta":
 				delta := gjson.Get(data, "delta").String()
@@ -1049,6 +1177,8 @@ func handleExecute(request []byte) ([]byte, error) {
 	} else {
 		payload = normalizeUpstreamModel(payload)
 	}
+	// Ensure model-map rewrite is applied even if payload bypassed helpers.
+	payload = rewritePayloadModel(payload)
 	payload = ensureStreamFlag(payload, false)
 	resp, errDo := hostHTTPDo(req.HostCallbackID, upstreamURL(cfg, req.Alt), buildUpstreamHeaders(cfg, req.Headers), payload)
 	if errDo != nil {
@@ -1113,6 +1243,8 @@ func runUpstreamStream(req rpcExecutorRequest, pluginStreamID string) error {
 	} else {
 		payload = normalizeUpstreamModel(payload)
 	}
+	// Ensure model-map rewrite is applied even if payload bypassed helpers.
+	payload = rewritePayloadModel(payload)
 	payload = ensureStreamFlag(payload, true)
 	raw, errCall := callHost(pluginabi.MethodHostHTTPDoStream, hostHTTPRequest{
 		HostCallbackID: req.HostCallbackID,
@@ -1136,15 +1268,22 @@ func runUpstreamStream(req rpcExecutorRequest, pluginStreamID string) error {
 	if streamResp.StatusCode >= 400 {
 		return fmt.Errorf("upstream status %d: %s", streamResp.StatusCode, snippet(drainHostHTTPStream(streamResp.StreamID)))
 	}
-	// State for chat stream translation.
+	// State for chat stream translation: preserve requested alias for transparent upgrade.
 	var chatState chatStreamState
 	if isChat {
-		chatState.model = strings.TrimSpace(req.Model)
-		if chatState.model == "" {
-			if m := gjson.GetBytes(req.Payload, "model").String(); strings.TrimSpace(m) != "" {
-				chatState.model = strings.TrimSpace(m)
+		alias := strings.TrimSpace(req.Model)
+		if alias == "" {
+			alias = strings.TrimSpace(gjson.GetBytes(req.Payload, "model").String())
+		}
+		// Normalize alias to base without thinking suffix for response model.
+		if alias != "" {
+			base, _ := stripThinkingSuffix(alias)
+			base = strings.TrimSpace(base)
+			if base != "" {
+				alias = base
 			}
 		}
+		chatState.model = alias
 	}
 	// SSE reassembly buffer and DONE dedupe.
 	var pending []byte
